@@ -21,7 +21,16 @@ export default function InvestmentDetailPage() {
     return <PageSkeleton />;
   }
   if (userQuery.status === "error" || portfolioQuery.status === "error") {
-    return <ErrorState title="Unable to load this investment record." />;
+    return (
+      <ErrorState
+        title="Unable to load this investment record."
+        description={userQuery.error ?? portfolioQuery.error ?? undefined}
+        onRetry={() => {
+          userQuery.refetch();
+          portfolioQuery.refetch();
+        }}
+      />
+    );
   }
 
   return (

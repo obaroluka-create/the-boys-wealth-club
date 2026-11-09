@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMounted } from "@/hooks/use-mounted";
+import { useMemo } from "react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -8,8 +9,7 @@ import { formatCurrency, formatPercent } from "@/lib/format";
 import type { PortfolioPerformancePoint } from "@/types";
 
 export function MonthlyBreakdown({ points }: { points: PortfolioPerformancePoint[] }) {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
+  const mounted = useMounted();
 
   const data = useMemo(() => {
     const lastByMonth = new Map<string, PortfolioPerformancePoint>();

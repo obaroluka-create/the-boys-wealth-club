@@ -1,70 +1,64 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useState } from "react";
 import { subscribeToInvalidation } from "@/lib/query";
 
-type QueryState<T> =
+type QueryResult<T> =
   | { status: "loading"; data: null; error: null }
   | { status: "success"; data: T; error: null }
   | { status: "error"; data: null; error: string };
 
-export function useQuery<T>(fn: () => Promise<T>, deps: unknown[] = [], enabled = true) {
-  const [state, setState] = useState<QueryState<T>>({
-    status: "loading",
-    data: null,
-    error: null,
-  });
+/** Result tagged with the dependency key it was fetched for. */
+type KeyedResult<T> = QueryResult<T> & { key: string };
 
-  const refetch = useCallback(async () => {
-    setState((current) =>
-      current.status === "success"
-        ? current
-        : { status: "loading", data: null, error: null },
-    );
-    try {
-      const data = await fn();
-      setState({ status: "success", data, error: null });
-    } catch (error) {
-      setState({
-        status: "error",
-        data: null,
-        error: error instanceof Error ? error.message : "Unable to load data.",
-      });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, deps);
+const LOADING = { status: "loading", data: null, error: null } as const;
+
+function toMessage(error: unknown) {
+  return error instanceof Error ? error.message : "Unable to load data.";
+}
+
+/**
+ * Minimal data-fetching hook.
+ *
+ * `deps` identify the request: when they change, the hook reports "loading"
+ * until the new result arrives. Results are re-fetched whenever a service
+ * calls `invalidateQueries()`.
+ */
+export function useQuery<T>(fn: () => Promise<T>, deps: unknown[] = [], enabled = true) {
+  const key = JSON.stringify(deps);
+  const [result, setResult] = useState<KeyedResult<T>>({ ...LOADING, key: "" });
+  const [nonce, setNonce] = useState(0);
+
+  const load = useEffectEvent(() => fn());
 
   useEffect(() => {
     if (!enabled) return;
     let active = true;
-    setState({ status: "loading", data: null, error: null });
-    fn()
-      .then((data) => {
-        if (active) setState({ status: "success", data, error: null });
-      })
-      .catch((error: unknown) => {
-        if (active) {
-          setState({
-            status: "error",
-            data: null,
-            error: error instanceof Error ? error.message : "Unable to load data.",
-          });
-        }
-      });
-    const unsubscribe = subscribeToInvalidation(() => {
-      if (!enabled) return;
-      fn()
+
+    function run() {
+      load()
         .then((data) => {
-          if (active) setState({ status: "success", data, error: null });
+          if (active) setResult({ status: "success", data, error: null, key });
         })
-        .catch(() => undefined);
-    });
+        .catch((error: unknown) => {
+          if (active) setResult({ status: "error", data: null, error: toMessage(error), key });
+        });
+    }
+
+    run();
+    const unsubscribe = subscribeToInvalidation(run);
     return () => {
       active = false;
       unsubscribe();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [...deps, enabled]);
+  }, [key, enabled, nonce]);
 
+  const refetch = useCallback(() => {
+    // Keep showing existing data while refreshing; only an error resets to loading.
+    setResult((current) => (current.status === "error" ? { ...LOADING, key: "" } : current));
+    setNonce((value) => value + 1);
+  }, []);
+
+  const state: QueryResult<T> = result.key === key ? result : LOADING;
   return { ...state, refetch };
 }

@@ -161,11 +161,6 @@ export interface UpdateUserInput {
   imageUrl?: string;
 }
 
-export interface InvestmentUpdateInput {
-  currentBalance?: number;
-  dividendAmount?: number;
-}
-
 export interface RecordDepositInput {
   amount: number;
   note?: string;
@@ -173,6 +168,7 @@ export interface RecordDepositInput {
 
 export interface RecordDividendInput {
   amount: number;
+  type?: DividendType;
 }
 
 export interface UpdateBookInput {

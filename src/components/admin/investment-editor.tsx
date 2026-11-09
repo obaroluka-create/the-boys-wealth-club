@@ -7,12 +7,19 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { formatCurrency, formatPercent } from "@/lib/format";
 import { getPortfolioMetrics } from "@/lib/portfolio-metrics";
 import { listDeposits, recordDeposit, recordDividend } from "@/services/investments.service";
 import { useQuery } from "@/hooks/use-query";
 import { DepositsTable } from "@/components/dashboard/deposits-table";
-import type { InvestmentPortfolio, User } from "@/types";
+import type { DividendType, InvestmentPortfolio, User } from "@/types";
 
 export function InvestmentEditor({
   user,
@@ -26,6 +33,7 @@ export function InvestmentEditor({
   const [depositAmount, setDepositAmount] = useState("");
   const [depositNote, setDepositNote] = useState("");
   const [dividend, setDividend] = useState("");
+  const [dividendType, setDividendType] = useState<DividendType>("quarterly");
   const [depositPending, setDepositPending] = useState(false);
   const [dividendPending, setDividendPending] = useState(false);
 
@@ -51,7 +59,7 @@ export function InvestmentEditor({
     event.preventDefault();
     setDividendPending(true);
     try {
-      await recordDividend(user.id, { amount: Number(dividend) });
+      await recordDividend(user.id, { amount: Number(dividend), type: dividendType });
       toast.success("Dividend recorded. Dividends are not added to current balance.");
       setDividend("");
     } catch (error) {
@@ -136,6 +144,22 @@ export function InvestmentEditor({
                 onChange={setDividend}
                 hint="Firm payout to this investor. Not included in current balance."
               />
+              <div className="space-y-2">
+                <Label>Dividend type</Label>
+                <Select
+                  value={dividendType}
+                  onValueChange={(value) => setDividendType(value as DividendType)}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="quarterly">Quarterly</SelectItem>
+                    <SelectItem value="annual">Annual</SelectItem>
+                    <SelectItem value="special">Special</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
               <Button type="submit" disabled={dividendPending}>
                 {dividendPending ? <Loader2 className="animate-spin" /> : null}
                 Add dividend

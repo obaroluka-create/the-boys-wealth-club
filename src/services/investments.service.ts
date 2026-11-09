@@ -7,7 +7,6 @@
  * GET  /users/:id/deposits
  * POST /users/:id/deposits
  * POST /users/:id/dividends
- * PATCH /users/:id/portfolio
  * GET  /book
  * PATCH /book
  */
@@ -19,7 +18,6 @@ import type {
   CollectiveBook,
   Deposit,
   InvestmentPortfolio,
-  InvestmentUpdateInput,
   RecordDepositInput,
   RecordDividendInput,
   TimeRange,
@@ -86,25 +84,4 @@ export async function updateBook(input: UpdateBookInput) {
   );
   invalidateQueries();
   return book;
-}
-
-export async function updateInvestment(userId: string, input: InvestmentUpdateInput) {
-  const portfolio = await callService(
-    `/users/${userId}/portfolio`,
-    { method: "PATCH", body: JSON.stringify(input) },
-    () => platformDb.updateInvestment(userId, input),
-  );
-  invalidateQueries();
-  return portfolio;
-}
-
-export async function updateBalance(userId: string, nextBalance: number) {
-  if (nextBalance < 0) throw new ApiError("Balance cannot be negative.");
-  const portfolio = await callService(
-    `/users/${userId}/portfolio/balance`,
-    { method: "PATCH", body: JSON.stringify({ currentBalance: nextBalance }) },
-    () => platformDb.updateBalance(userId, nextBalance),
-  );
-  invalidateQueries();
-  return portfolio;
 }

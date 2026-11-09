@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMounted } from "@/hooks/use-mounted";
+import { useMemo } from "react";
 import {
   Area,
   AreaChart,
@@ -38,8 +39,7 @@ export function PerformanceChart({
   onRangeChange: (range: TimeRange) => void;
   title?: string;
 }) {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
+  const mounted = useMounted();
 
   const data = useMemo(
     () =>

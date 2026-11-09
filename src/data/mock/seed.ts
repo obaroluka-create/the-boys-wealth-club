@@ -122,11 +122,16 @@ function seeded(seed: number) {
   };
 }
 
+/** Seeded history runs up to the day the mock platform is created, so time ranges stay current. */
+export function seedEndDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
 export function buildPerformanceSeries(
   initial: number,
   current: number,
   startISO: string,
-  endISO = "2026-09-01",
+  endISO = seedEndDate(),
   seedKey = "meridian",
 ): PortfolioPerformancePoint[] {
   const start = new Date(`${startISO}T00:00:00.000Z`);
@@ -462,7 +467,7 @@ export const performances: PortfolioPerformance[] = portfolios.map((item) => {
       item.totalDeposit,
       item.currentBalance,
       owner.memberSince,
-      "2026-09-01",
+      seedEndDate(),
       "collective-book",
     ),
   };
