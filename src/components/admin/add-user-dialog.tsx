@@ -118,8 +118,8 @@ function AddUserForm({ onDone }: { onDone: () => void }) {
           <Input
             id="amount"
             type="number"
-            min="1"
-            step="100"
+            min="0.01"
+            step="0.01"
             value={amount}
             onChange={(event) => setAmount(event.target.value)}
             required

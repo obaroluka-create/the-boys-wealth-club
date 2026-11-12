@@ -8,6 +8,7 @@
  * POST /users/:id/deposits
  * POST /users/:id/dividends
  * GET  /book
+ * GET  /book/valuations
  * PATCH /book
  */
 
@@ -15,6 +16,7 @@ import { platformDb } from "@/data/mock/db";
 import { invalidateQueries } from "@/lib/query";
 import { ApiError, callService } from "@/services/client";
 import type {
+  BookValuation,
   CollectiveBook,
   Deposit,
   InvestmentPortfolio,
@@ -76,6 +78,11 @@ export async function recordDividend(userId: string, input: RecordDividendInput)
 
 export async function getBook(): Promise<CollectiveBook> {
   return callService("/book", { method: "GET" }, () => platformDb.getBook());
+}
+
+/** Book price history, newest first. */
+export async function listBookValuations(): Promise<BookValuation[]> {
+  return callService("/book/valuations", { method: "GET" }, () => platformDb.listBookValuations());
 }
 
 export async function updateBook(input: UpdateBookInput) {

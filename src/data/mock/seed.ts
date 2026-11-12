@@ -1,20 +1,25 @@
 import type {
   AccountStatus,
+  BookValuation,
   CollectiveBook,
   Deposit,
   Dividend,
   InvestmentPortfolio,
-  PortfolioPerformance,
-  PortfolioPerformancePoint,
   Transaction,
   User,
   UserRole,
 } from "@/types";
 import { DEMO_PASSWORD } from "@/lib/constants";
+import { formatCurrency } from "@/lib/format";
 import {
-  netPerformancePercentage,
-  portfolioPerformancePercentage,
-} from "@/utils/investmentCalculations";
+  LAUNCH_UNIT_PRICE,
+  applyPeriodReturn,
+  percentChange,
+  replayPortfolio,
+  unitPriceAt,
+  unitValue,
+  unitsForAmount,
+} from "@/utils/unitAccounting";
 
 export const IDS = {
   admins: {
@@ -64,46 +69,6 @@ function user(partial: {
   };
 }
 
-/** Every investor sits in the same collective book, so P/L rates match. */
-export const BOOK_PROFIT_RATE = 0.124;
-export const BOOK_LOSS_RATE = 0.038;
-
-export const collectiveBook: CollectiveBook = {
-  profitRate: BOOK_PROFIT_RATE,
-  lossRate: BOOK_LOSS_RATE,
-  updatedAt: "2026-08-30T11:05:00.000Z",
-};
-
-function bookPnL(deposit: number) {
-  return {
-    profit: Math.round(deposit * BOOK_PROFIT_RATE * 100) / 100,
-    loss: Math.round(deposit * BOOK_LOSS_RATE * 100) / 100,
-  };
-}
-
-function portfolio(input: {
-  id: string;
-  userId: string;
-  reference: string;
-  initial: number;
-  profit: number;
-  loss: number;
-  dividends: number;
-  updatedAt: string;
-}): InvestmentPortfolio {
-  return {
-    id: input.id,
-    userId: input.userId,
-    reference: input.reference,
-    totalDeposit: input.initial,
-    currentBalance: input.initial + input.profit - input.loss,
-    totalProfit: input.profit,
-    totalLoss: input.loss,
-    totalDividends: input.dividends,
-    updatedAt: input.updatedAt,
-  };
-}
-
 function hash(seed: string): number {
   let h = 2166136261;
   for (let i = 0; i < seed.length; i += 1) {
@@ -122,57 +87,61 @@ function seeded(seed: number) {
   };
 }
 
-/** Seeded history runs up to the day the mock platform is created, so time ranges stay current. */
+/** Seeded history runs up to the moment the mock platform is created, so time ranges stay current. */
 export function seedEndDate() {
   return new Date().toISOString().slice(0, 10);
 }
 
-export function buildPerformanceSeries(
-  initial: number,
-  current: number,
-  startISO: string,
-  endISO = seedEndDate(),
-  seedKey = "meridian",
-): PortfolioPerformancePoint[] {
-  const start = new Date(`${startISO}T00:00:00.000Z`);
-  const end = new Date(`${endISO}T00:00:00.000Z`);
-  const rand = seeded(hash(seedKey));
-  const totalMs = Math.max(end.getTime() - start.getTime(), 1);
-  const points: PortfolioPerformancePoint[] = [];
-  const cursor = new Date(start);
-  let i = 0;
+const BOOK_LAUNCH_DATE = "2022-01-01";
 
-  while (cursor.getTime() <= end.getTime()) {
-    const t = (cursor.getTime() - start.getTime()) / totalMs;
-    const eased = t * t * (3 - 2 * t);
-    const drift = (rand() - 0.48) * 0.018 * initial;
-    const cycle = Math.sin(i / 3.2) * 0.012 * initial;
-    const value = Math.max(initial * 0.86, initial + (current - initial) * eased + drift + cycle);
-    points.push({
-      date: cursor.toISOString().slice(0, 10),
-      value: Math.round(value * 100) / 100,
-      percentageChange: netPerformancePercentage(value - initial, initial),
+/**
+ * Collective book valuations on the 1st and 15th of each month from launch
+ * until now. Period returns follow a deterministic random walk (mean +0.32%,
+ * roughly 1.4% spread) so there are both profitable and losing periods.
+ */
+function buildBookValuations(): BookValuation[] {
+  const rand = seeded(hash("tbwc-collective-book"));
+  const now = new Date().toISOString();
+  const valuations: BookValuation[] = [];
+  const cursor = new Date(`${BOOK_LAUNCH_DATE}T00:00:00.000Z`);
+  let price = LAUNCH_UNIT_PRICE;
+
+  for (let index = 0; ; index += 1) {
+    const date = `${cursor.toISOString().slice(0, 10)}T16:00:00.000Z`;
+    if (date > now) break;
+    // Sum of three uniforms approximates a normal distribution.
+    const noise = (rand() + rand() + rand() - 1.5) / 0.5;
+    const change = index === 0 ? 0 : Math.round((0.32 + noise * 1.4) * 100) / 100;
+    const profitPercent = Math.max(change, 0);
+    const lossPercent = Math.max(-change, 0);
+    const unitPrice = index === 0 ? price : applyPeriodReturn(price, profitPercent, lossPercent);
+    valuations.push({
+      id: `b0000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+      date,
+      unitPrice,
+      previousUnitPrice: price,
+      changePercent: percentChange(price, unitPrice),
+      profitPercent,
+      lossPercent,
     });
-    cursor.setUTCDate(cursor.getUTCDate() + 14);
-    i += 1;
+    price = unitPrice;
+    if (cursor.getUTCDate() === 1) cursor.setUTCDate(15);
+    else cursor.setUTCMonth(cursor.getUTCMonth() + 1, 1);
   }
-
-  if (points.length === 0 || points[points.length - 1].date !== endISO) {
-    points.push({
-      date: endISO,
-      value: current,
-      percentageChange: netPerformancePercentage(current - initial, initial),
-    });
-  } else {
-    points[points.length - 1] = {
-      date: endISO,
-      value: current,
-      percentageChange: netPerformancePercentage(current - initial, initial),
-    };
-  }
-
-  return points;
+  return valuations;
 }
+
+export const bookValuations: BookValuation[] = buildBookValuations();
+
+const latestValuation = bookValuations[bookValuations.length - 1];
+
+export const collectiveBook: CollectiveBook = {
+  unitPrice: latestValuation.unitPrice,
+  launchUnitPrice: LAUNCH_UNIT_PRICE,
+  launchedAt: bookValuations[0].date,
+  updatedAt: latestValuation.date,
+  lastChangePercent: latestValuation.changePercent,
+};
 
 export const users: User[] = [
   user({
@@ -295,97 +264,22 @@ export const users: User[] = [
   }),
 ];
 
-export const portfolios: InvestmentPortfolio[] = [
-  portfolio({
-    id: IDS.portfolios.james,
-    userId: IDS.users.james,
-    reference: "MER-1042",
-    initial: 1_250_000,
-    ...bookPnL(1_250_000),
-    dividends: 31_250,
-    updatedAt: "2026-08-28T14:20:00.000Z",
-  }),
-  portfolio({
-    id: IDS.portfolios.rafael,
-    userId: IDS.users.rafael,
-    reference: "MER-1188",
-    initial: 95_000,
-    ...bookPnL(95_000),
-    dividends: 1_425,
-    updatedAt: "2026-08-21T09:10:00.000Z",
-  }),
-  portfolio({
-    id: IDS.portfolios.amara,
-    userId: IDS.users.amara,
-    reference: "MER-1214",
-    initial: 420_000,
-    ...bookPnL(420_000),
-    dividends: 9_800,
-    updatedAt: "2026-08-30T11:05:00.000Z",
-  }),
-  portfolio({
-    id: IDS.portfolios.sophia,
-    userId: IDS.users.sophia,
-    reference: "MER-1098",
-    initial: 850_000,
-    ...bookPnL(850_000),
-    dividends: 17_000,
-    updatedAt: "2026-08-19T16:40:00.000Z",
-  }),
-  portfolio({
-    id: IDS.portfolios.hiroshi,
-    userId: IDS.users.hiroshi,
-    reference: "MER-0871",
-    initial: 2_400_000,
-    ...bookPnL(2_400_000),
-    dividends: 62_400,
-    updatedAt: "2026-08-26T08:15:00.000Z",
-  }),
-  portfolio({
-    id: IDS.portfolios.thomas,
-    userId: IDS.users.thomas,
-    reference: "MER-1302",
-    initial: 180_000,
-    ...bookPnL(180_000),
-    dividends: 600,
-    updatedAt: "2026-08-12T13:25:00.000Z",
-  }),
-  portfolio({
-    id: IDS.portfolios.isabelle,
-    userId: IDS.users.isabelle,
-    reference: "MER-1116",
-    initial: 675_000,
-    ...bookPnL(675_000),
-    dividends: 10_125,
-    updatedAt: "2026-08-22T10:50:00.000Z",
-  }),
-  portfolio({
-    id: IDS.portfolios.nadia,
-    userId: IDS.users.nadia,
-    reference: "MER-0744",
-    initial: 1_800_000,
-    ...bookPnL(1_800_000),
-    dividends: 36_000,
-    updatedAt: "2026-08-27T15:00:00.000Z",
-  }),
-  portfolio({
-    id: IDS.portfolios.owen,
-    userId: IDS.users.owen,
-    reference: "MER-1411",
-    initial: 50_000,
-    ...bookPnL(50_000),
-    dividends: 0,
-    updatedAt: "2026-08-08T12:00:00.000Z",
-  }),
-  portfolio({
-    id: IDS.portfolios.priya,
-    userId: IDS.users.priya,
-    reference: "MER-1255",
-    initial: 320_000,
-    ...bookPnL(320_000),
-    dividends: 4_800,
-    updatedAt: "2026-06-14T09:30:00.000Z",
-  }),
+const PORTFOLIO_SEEDS: Array<{
+  id: string;
+  userId: string;
+  reference: string;
+  dividends: number;
+}> = [
+  { id: IDS.portfolios.james, userId: IDS.users.james, reference: "MER-1042", dividends: 31_250 },
+  { id: IDS.portfolios.rafael, userId: IDS.users.rafael, reference: "MER-1188", dividends: 1_425 },
+  { id: IDS.portfolios.amara, userId: IDS.users.amara, reference: "MER-1214", dividends: 9_800 },
+  { id: IDS.portfolios.sophia, userId: IDS.users.sophia, reference: "MER-1098", dividends: 17_000 },
+  { id: IDS.portfolios.hiroshi, userId: IDS.users.hiroshi, reference: "MER-0871", dividends: 62_400 },
+  { id: IDS.portfolios.thomas, userId: IDS.users.thomas, reference: "MER-1302", dividends: 600 },
+  { id: IDS.portfolios.isabelle, userId: IDS.users.isabelle, reference: "MER-1116", dividends: 10_125 },
+  { id: IDS.portfolios.nadia, userId: IDS.users.nadia, reference: "MER-0744", dividends: 36_000 },
+  { id: IDS.portfolios.owen, userId: IDS.users.owen, reference: "MER-1411", dividends: 0 },
+  { id: IDS.portfolios.priya, userId: IDS.users.priya, reference: "MER-1255", dividends: 4_800 },
 ];
 
 const DEPOSIT_SCHEDULE: Record<string, Array<{ amount: number; date: string; note: string }>> = {
@@ -440,36 +334,39 @@ const DEPOSIT_SCHEDULE: Record<string, Array<{ amount: number; date: string; not
   ],
 };
 
-export const deposits: Deposit[] = portfolios.flatMap((item) => {
-  const schedule = DEPOSIT_SCHEDULE[item.id] ?? [
-    {
-      amount: item.totalDeposit,
-      date: users.find((entry) => entry.id === item.userId)?.memberSince ?? "2024-01-01",
-      note: "Opening deposit",
-    },
-  ];
-  return schedule.map((entry, index) => ({
-    id: `de${item.id.slice(2, 10)}${String(index).padStart(4, "0")}`,
-    userId: item.userId,
-    portfolioId: item.id,
-    amount: entry.amount,
-    date: entry.date,
-    note: entry.note,
-  }));
-});
+/** Each seeded deposit buys units at the book price in effect on its date. */
+export const deposits: Deposit[] = PORTFOLIO_SEEDS.flatMap((item) =>
+  (DEPOSIT_SCHEDULE[item.id] ?? []).map((entry, index) => {
+    const unitPrice = unitPriceAt(bookValuations, entry.date);
+    return {
+      id: `de${item.id.slice(2, 10)}${String(index).padStart(4, "0")}`,
+      userId: item.userId,
+      portfolioId: item.id,
+      amount: entry.amount,
+      units: unitsForAmount(entry.amount, unitPrice),
+      unitPrice,
+      date: entry.date,
+      note: entry.note,
+    };
+  }),
+);
 
-export const performances: PortfolioPerformance[] = portfolios.map((item) => {
-  const owner = users.find((entry) => entry.id === item.userId)!;
+export const portfolios: InvestmentPortfolio[] = PORTFOLIO_SEEDS.map((item) => {
+  const position = replayPortfolio(
+    deposits.filter((entry) => entry.portfolioId === item.id),
+    bookValuations,
+  );
   return {
+    id: item.id,
     userId: item.userId,
-    portfolioId: item.id,
-    points: buildPerformanceSeries(
-      item.totalDeposit,
-      item.currentBalance,
-      owner.memberSince,
-      seedEndDate(),
-      "collective-book",
-    ),
+    reference: item.reference,
+    units: position.units,
+    totalDeposit: position.totalDeposit,
+    currentBalance: position.currentBalance,
+    totalProfit: position.totalProfit,
+    totalLoss: position.totalLoss,
+    totalDividends: item.dividends,
+    updatedAt: latestValuation.date,
   };
 });
 
@@ -646,142 +543,97 @@ export const dividends: Dividend[] = [
   },
 ];
 
-function tx(partial: Omit<Transaction, "status"> & { status?: Transaction["status"] }): Transaction {
-  return { status: "completed", ...partial };
+let txCounter = 0;
+
+function tx(partial: Omit<Transaction, "id" | "status">): Transaction {
+  txCounter += 1;
+  return {
+    id: `70000000-0000-4000-8000-${String(txCounter).padStart(12, "0")}`,
+    status: "completed",
+    ...partial,
+  };
 }
 
-export const transactions: Transaction[] = [
-  tx({
-    id: "t0000001-0000-4000-8000-000000000001",
-    userId: IDS.users.james,
-    date: "2023-02-14T10:00:00.000Z",
-    action: "account_created",
-    previousValue: null,
-    newValue: 1_250_000,
-    note: "Initial capital committed",
-  }),
-  tx({
-    id: "t0000001-0000-4000-8000-000000000002",
-    userId: IDS.users.james,
-    date: "2025-11-12T15:40:00.000Z",
-    action: "profit_added",
-    previousValue: 1_331_000,
-    newValue: 1_402_250,
-  }),
-  tx({
-    id: "t0000001-0000-4000-8000-000000000003",
-    userId: IDS.users.james,
-    date: "2026-03-04T09:12:00.000Z",
-    action: "loss_recorded",
-    previousValue: 1_498_000,
-    newValue: 1_479_500,
-  }),
-  tx({
-    id: "t0000001-0000-4000-8000-000000000004",
-    userId: IDS.users.james,
-    date: "2026-06-20T11:00:00.000Z",
-    action: "dividend_added",
-    previousValue: 21_875,
-    newValue: 31_250,
-  }),
-  tx({
-    id: "t0000001-0000-4000-8000-000000000005",
-    userId: IDS.users.james,
-    date: "2026-08-28T14:20:00.000Z",
-    action: "balance_updated",
-    previousValue: 1_471_200,
-    newValue: 1_479_500,
-  }),
-  tx({
-    id: "t0000002-0000-4000-8000-000000000006",
-    userId: IDS.users.amara,
-    date: "2024-01-22T10:00:00.000Z",
-    action: "account_created",
-    previousValue: null,
-    newValue: 420_000,
-  }),
-  tx({
-    id: "t0000002-0000-4000-8000-000000000007",
-    userId: IDS.users.amara,
-    date: "2026-08-30T11:05:00.000Z",
-    action: "profit_added",
-    previousValue: 498_400,
-    newValue: 524_160,
-  }),
-  tx({
-    id: "t0000003-0000-4000-8000-000000000008",
-    userId: IDS.users.thomas,
-    date: "2025-01-08T10:00:00.000Z",
-    action: "account_created",
-    previousValue: null,
-    newValue: 180_000,
-  }),
-  tx({
-    id: "t0000003-0000-4000-8000-000000000009",
-    userId: IDS.users.thomas,
-    date: "2026-08-12T13:25:00.000Z",
-    action: "loss_recorded",
-    previousValue: 176_400,
-    newValue: 168_840,
-  }),
-  tx({
-    id: "t0000004-0000-4000-8000-000000000010",
-    userId: IDS.users.owen,
-    date: "2025-11-02T10:00:00.000Z",
-    action: "account_created",
-    previousValue: null,
-    newValue: 50_000,
-  }),
-  tx({
-    id: "t0000005-0000-4000-8000-000000000011",
-    userId: IDS.users.priya,
-    date: "2024-08-27T10:00:00.000Z",
-    action: "account_created",
-    previousValue: null,
-    newValue: 320_000,
-  }),
-  tx({
-    id: "t0000005-0000-4000-8000-000000000012",
-    userId: IDS.users.priya,
-    date: "2026-06-14T09:30:00.000Z",
-    action: "account_disabled",
-    previousValue: null,
-    newValue: null,
-    note: "Account paused pending documentation review",
-  }),
-  tx({
-    id: "t0000006-0000-4000-8000-000000000013",
-    userId: IDS.users.rafael,
-    date: "2024-04-09T10:00:00.000Z",
-    action: "account_created",
-    previousValue: null,
-    newValue: 95_000,
-  }),
-  tx({
-    id: "t0000006-0000-4000-8000-000000000014",
-    userId: IDS.users.rafael,
-    date: "2026-08-21T09:10:00.000Z",
-    action: "profit_added",
-    previousValue: 108_100,
-    newValue: 113_240,
-  }),
-  tx({
-    id: "t0000007-0000-4000-8000-000000000015",
-    userId: IDS.users.hiroshi,
-    date: "2022-11-18T10:00:00.000Z",
-    action: "account_created",
-    previousValue: null,
-    newValue: 2_400_000,
-  }),
-  tx({
-    id: "t0000007-0000-4000-8000-000000000016",
-    userId: IDS.users.nadia,
-    date: "2022-05-16T10:00:00.000Z",
-    action: "account_created",
-    previousValue: null,
-    newValue: 1_800_000,
-  }),
-];
+/** Units held just before `at`: deposits recorded earlier than that moment. */
+function unitsHeldBefore(portfolioId: string, at: string) {
+  return deposits
+    .filter((entry) => entry.portfolioId === portfolioId && entry.date < at)
+    .reduce((sum, entry) => sum + entry.units, 0);
+}
+
+/** Activity history derived from the seeded deposits, dividends and recent valuations. */
+function buildTransactions(): Transaction[] {
+  const list: Transaction[] = [];
+
+  for (const item of PORTFOLIO_SEEDS) {
+    let total = 0;
+    deposits
+      .filter((entry) => entry.portfolioId === item.id)
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .forEach((entry, index) => {
+        const previous = total;
+        total += entry.amount;
+        list.push(
+          tx({
+            userId: item.userId,
+            date: `${entry.date}T09:00:00.000Z`,
+            action: index === 0 ? "account_created" : "deposit_recorded",
+            previousValue: index === 0 ? null : previous,
+            newValue: index === 0 ? entry.amount : total,
+            note: `${entry.note} · ${entry.units.toFixed(4)} units at ${formatCurrency(entry.unitPrice, true)}`,
+          }),
+        );
+      });
+
+    let dividendTotal = 0;
+    dividends
+      .filter((entry) => entry.portfolioId === item.id && entry.status === "paid")
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .forEach((entry) => {
+        const previous = dividendTotal;
+        dividendTotal += entry.amount;
+        list.push(
+          tx({
+            userId: item.userId,
+            date: `${entry.date}T12:00:00.000Z`,
+            action: "dividend_added",
+            previousValue: previous,
+            newValue: dividendTotal,
+          }),
+        );
+      });
+
+    for (const valuation of bookValuations.slice(-3)) {
+      const units = unitsHeldBefore(item.id, valuation.date);
+      if (units <= 0) continue;
+      list.push(
+        tx({
+          userId: item.userId,
+          date: valuation.date,
+          action: "book_updated",
+          previousValue: unitValue(units, valuation.previousUnitPrice),
+          newValue: unitValue(units, valuation.unitPrice),
+          note: `Unit price ${formatCurrency(valuation.previousUnitPrice, true)} → ${formatCurrency(valuation.unitPrice, true)}`,
+        }),
+      );
+    }
+  }
+
+  list.push(
+    tx({
+      userId: IDS.users.priya,
+      date: "2026-06-14T09:30:00.000Z",
+      action: "account_disabled",
+      previousValue: null,
+      newValue: null,
+      note: "Account paused pending documentation review",
+    }),
+  );
+
+  return list.sort((a, b) => b.date.localeCompare(a.date));
+}
+
+export const transactions: Transaction[] = buildTransactions();
 
 export const credentials: Record<string, string> = Object.fromEntries(
   users.flatMap((entry) => [
@@ -797,18 +649,14 @@ export function createSeedState() {
   return {
     users: structuredClone(users),
     portfolios: structuredClone(portfolios),
-    performances: structuredClone(performances),
     dividends: structuredClone(dividends),
     deposits: structuredClone(deposits),
     transactions: structuredClone(transactions),
     credentials: { ...credentials },
     book: { ...collectiveBook },
+    valuations: structuredClone(bookValuations),
     sessions: {} as Record<string, { userId: string; createdAt: string }>,
   };
 }
 
 export type PlatformState = ReturnType<typeof createSeedState>;
-
-export function describeUserPerformance(portfolio: InvestmentPortfolio) {
-  return portfolioPerformancePercentage(portfolio);
-}

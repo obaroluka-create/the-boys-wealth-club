@@ -7,34 +7,37 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { formatPercent } from "@/lib/format";
-import { getBook, updateBook } from "@/services/investments.service";
+import { formatCurrency, formatDate, formatPercent } from "@/lib/format";
+import { cn } from "@/lib/utils";
+import { getBook, listBookValuations, updateBook } from "@/services/investments.service";
 import { useQuery } from "@/hooks/use-query";
+import { applyPeriodReturn, percentChange } from "@/utils/unitAccounting";
 
 export function BookPerformanceCard() {
   const query = useQuery(() => getBook(), []);
+  const historyQuery = useQuery(() => listBookValuations(), []);
   const [profit, setProfit] = useState("");
   const [loss, setLoss] = useState("");
   const [pending, setPending] = useState(false);
 
   const preview = useMemo(() => {
     if (query.status !== "success") return null;
-    const profitDelta = Number(profit) || 0;
-    const lossDelta = Number(loss) || 0;
-    const nextProfitRate = query.data.profitRate + profitDelta / 100;
-    const nextLossRate = query.data.lossRate + lossDelta / 100;
-    return (nextProfitRate - nextLossRate) * 100;
+    const profitPercent = Number(profit) || 0;
+    const lossPercent = Number(loss) || 0;
+    if (profitPercent === 0 && lossPercent === 0) return null;
+    const unitPrice = applyPeriodReturn(query.data.unitPrice, profitPercent, lossPercent);
+    return { unitPrice, change: percentChange(query.data.unitPrice, unitPrice) };
   }, [loss, profit, query]);
 
   async function onSubmit(event: React.FormEvent) {
     event.preventDefault();
     setPending(true);
     try {
-      await updateBook({
-        incrementalProfitPercent: Number(profit) || 0,
-        incrementalLossPercent: Number(loss) || 0,
+      const book = await updateBook({
+        profitPercent: Number(profit) || 0,
+        lossPercent: Number(loss) || 0,
       });
-      toast.success("Book performance applied to every investor.");
+      toast.success(`Unit price is now ${formatCurrency(book.unitPrice, true)} for every investor.`);
       setProfit("");
       setLoss("");
     } catch (error) {
@@ -53,28 +56,38 @@ export function BookPerformanceCard() {
         {query.status === "error" ? (
           <p className="text-sm text-muted-foreground">Unable to load the shared book.</p>
         ) : query.status !== "success" ? (
-          <p className="text-sm text-muted-foreground">Loading book rates…</p>
+          <p className="text-sm text-muted-foreground">Loading the book…</p>
         ) : (
           <>
             <p className="text-sm text-muted-foreground">
-              Every investor is in the same stock book at the same time. Recording performance here
-              updates all portfolios to the same percentage.
+              Every investor holds units in the same book. Recording a period&apos;s performance moves
+              the unit price for everyone; deposits buy units at the price on the day they are
+              recorded, so new money only shares in performance from then on.
             </p>
             <dl className="mt-4 grid gap-3 sm:grid-cols-3">
-              <Metric label="Book profit rate" value={formatPercent(query.data.profitRate * 100)} />
-              <Metric label="Book loss rate" value={formatPercent(query.data.lossRate * 100)} />
+              <Metric label="Unit price" value={formatCurrency(query.data.unitPrice, true)} />
               <Metric
-                label="Net book performance"
-                value={formatPercent((query.data.profitRate - query.data.lossRate) * 100)}
+                label="Since launch"
+                value={formatPercent(percentChange(query.data.launchUnitPrice, query.data.unitPrice))}
+                hint={`From ${formatCurrency(query.data.launchUnitPrice)} on ${formatDate(query.data.launchedAt)}`}
+              />
+              <Metric
+                label="Last period"
+                value={formatPercent(query.data.lastChangePercent)}
+                hint={`Recorded ${formatDate(query.data.updatedAt)}`}
               />
             </dl>
-            <form className="mt-6 grid gap-4 md:grid-cols-[1fr_1fr_auto] md:items-end" onSubmit={onSubmit}>
+            <form
+              className="mt-6 grid gap-4 md:grid-cols-[1fr_1fr_auto] md:items-end"
+              onSubmit={onSubmit}
+            >
               <div className="space-y-2">
                 <Label htmlFor="book-profit">Period profit %</Label>
                 <Input
                   id="book-profit"
                   type="number"
                   step="0.01"
+                  min="0"
                   value={profit}
                   onChange={(event) => setProfit(event.target.value)}
                 />
@@ -95,10 +108,35 @@ export function BookPerformanceCard() {
                 Apply to all
               </Button>
             </form>
-            {preview !== null ? (
+            {preview ? (
               <p className="mt-3 text-xs text-muted-foreground">
-                Projected net book performance: {formatPercent(preview)}
+                New unit price: {formatCurrency(preview.unitPrice, true)} (
+                {formatPercent(preview.change)})
               </p>
+            ) : null}
+            {historyQuery.status === "success" && historyQuery.data.length > 0 ? (
+              <div className="mt-6">
+                <p className="mb-2 text-xs font-medium tracking-wide text-muted-foreground uppercase">
+                  Recent valuations
+                </p>
+                <ul className="divide-y rounded-lg border text-sm">
+                  {historyQuery.data.slice(0, 5).map((item) => (
+                    <li key={item.id} className="flex items-center justify-between gap-4 px-3 py-2">
+                      <span className="text-muted-foreground">{formatDate(item.date)}</span>
+                      <span className="financial">{formatCurrency(item.unitPrice, true)}</span>
+                      <span
+                        className={cn(
+                          "financial w-20 text-right",
+                          item.changePercent > 0 && "text-gain",
+                          item.changePercent < 0 && "text-loss",
+                        )}
+                      >
+                        {formatPercent(item.changePercent)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
             ) : null}
           </>
         )}
@@ -107,11 +145,12 @@ export function BookPerformanceCard() {
   );
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
+function Metric({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
     <div>
       <dt className="text-xs text-muted-foreground">{label}</dt>
       <dd className="financial mt-1 text-sm font-medium">{value}</dd>
+      {hint ? <dd className="mt-0.5 text-[11px] text-muted-foreground">{hint}</dd> : null}
     </div>
   );
 }

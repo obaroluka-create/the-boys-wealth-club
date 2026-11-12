@@ -21,7 +21,7 @@ export default function LeaderboardPage() {
     <div>
       <PageHeading
         title="Leaderboard"
-        description="Every investor participates in the same collective book. Rankings show current balance by UUID only — names are never displayed."
+        description="Every investor holds units in the same collective book. Rankings show current balance by UUID only — names are never displayed."
       />
       <LeaderboardTable entries={query.data} currentUserId={session.userId} />
     </div>

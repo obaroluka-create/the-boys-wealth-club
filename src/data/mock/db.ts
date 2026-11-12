@@ -1,9 +1,9 @@
 import { DEMO_PASSWORD, PLATFORM_STORAGE_KEY } from "@/lib/constants";
 import { createUuidV4 } from "@/lib/uuid";
 import { createSeedState, type PlatformState } from "@/data/mock/seed";
-import { buildPerformanceSeries } from "@/data/mock/seed";
 import type {
   AccountStatus,
+  BookValuation,
   CollectiveBook,
   CreateUserInput,
   Deposit,
@@ -22,11 +22,16 @@ import type {
   UserQuery,
 } from "@/types";
 import {
-  applyBookToDeposit,
   netProfitLoss,
   portfolioPerformancePercentage,
   roundCurrency,
 } from "@/utils/investmentCalculations";
+import {
+  applyPeriodReturn,
+  percentChange,
+  replayPortfolio,
+  unitsForAmount,
+} from "@/utils/unitAccounting";
 
 type Listener = () => void;
 
@@ -54,7 +59,7 @@ function hydrate() {
   }
   try {
     const parsed = JSON.parse(raw) as PlatformState;
-    if (parsed?.users?.length && parsed?.portfolios?.length && parsed.book && parsed.deposits) {
+    if (parsed?.users?.length && parsed?.portfolios?.length && parsed.book && parsed.deposits && parsed.valuations) {
       state = { ...createSeedState(), ...parsed, sessions: parsed.sessions ?? {} };
     } else {
       state = createSeedState();
@@ -126,34 +131,28 @@ function appendTransaction(entry: Omit<Transaction, "id" | "status" | "date"> & 
   ];
 }
 
-function rebuildPerformance(portfolio: InvestmentPortfolio, memberSince: string) {
-  state.performances = state.performances.filter((item) => item.portfolioId !== portfolio.id);
-  state.performances.push({
-    userId: portfolio.userId,
-    portfolioId: portfolio.id,
-    points: buildPerformanceSeries(
-      portfolio.totalDeposit,
-      portfolio.currentBalance,
-      memberSince,
-      today(),
-      `collective-book-${state.book.updatedAt}`,
-    ),
-  });
+function depositsFor(portfolioId: string) {
+  return state.deposits.filter((item) => item.portfolioId === portfolioId);
 }
 
-function applyBook(portfolio: InvestmentPortfolio, book: CollectiveBook = state.book): InvestmentPortfolio {
+/** Recompute a portfolio's figures from its deposits and the book's price history. */
+function revalue(portfolio: InvestmentPortfolio): InvestmentPortfolio {
+  const position = replayPortfolio(depositsFor(portfolio.id), state.valuations);
   return {
     ...portfolio,
-    ...applyBookToDeposit(portfolio.totalDeposit, book.profitRate, book.lossRate),
+    units: position.units,
+    totalDeposit: position.totalDeposit,
+    currentBalance: position.currentBalance,
+    totalProfit: position.totalProfit,
+    totalLoss: position.totalLoss,
     updatedAt: nowIso(),
   };
 }
 
-function rebuildAllPerformances() {
-  snapshot().portfolios.forEach((portfolio) => {
-    const owner = snapshot().users.find((user) => user.id === portfolio.userId);
-    if (owner) rebuildPerformance(portfolio, owner.memberSince);
-  });
+/** Last day (YYYY-MM-DD) of a YYYY-MM month. */
+function monthEnd(month: string) {
+  const [year, monthIndex] = month.split("-").map(Number);
+  return new Date(Date.UTC(year, monthIndex, 0)).toISOString().slice(0, 10);
 }
 
 export const platformDb = {
@@ -260,46 +259,44 @@ export const platformDb = {
       memberSince: today(),
       imageUrl: `https://i.pravatar.cc/256?u=${id}`,
     };
-    const reference = nextReference();
     const opening = roundCurrency(input.totalDeposit);
-    const createdPortfolio = applyBook({
+    const unitPrice = state.book.unitPrice;
+    const portfolioId = createUuidV4();
+    // The opening deposit buys units at today's price, so a new investor starts at 0% return.
+    const openingDeposit: Deposit = {
       id: createUuidV4(),
       userId: id,
-      reference,
-      totalDeposit: opening,
-      currentBalance: opening,
+      portfolioId,
+      amount: opening,
+      units: unitsForAmount(opening, unitPrice),
+      unitPrice,
+      date: nowIso(),
+      note: "Opening deposit",
+    };
+    state.deposits = [openingDeposit, ...state.deposits];
+    const createdPortfolio = revalue({
+      id: portfolioId,
+      userId: id,
+      reference: nextReference(),
+      units: 0,
+      totalDeposit: 0,
+      currentBalance: 0,
       totalProfit: 0,
       totalLoss: 0,
       totalDividends: 0,
       updatedAt: nowIso(),
     });
-    const openingDeposit: Deposit = {
-      id: createUuidV4(),
-      userId: id,
-      portfolioId: createdPortfolio.id,
-      amount: opening,
-      date: today(),
-      note: "Opening deposit",
-    };
 
     state.users = [created, ...state.users];
     state.portfolios = [createdPortfolio, ...state.portfolios];
-    state.deposits = [openingDeposit, ...state.deposits];
     state.credentials[created.email] = DEMO_PASSWORD;
     state.credentials[created.username] = DEMO_PASSWORD;
-    rebuildPerformance(createdPortfolio, created.memberSince);
     appendTransaction({
       userId: id,
       action: "account_created",
       previousValue: null,
-      newValue: createdPortfolio.totalDeposit,
-    });
-    appendTransaction({
-      userId: id,
-      action: "deposit_recorded",
-      previousValue: 0,
       newValue: opening,
-      note: "Opening deposit",
+      note: `Opening deposit · ${openingDeposit.units.toFixed(4)} units at ${unitPrice.toFixed(2)}`,
     });
     emit();
     return created;
@@ -371,29 +368,27 @@ export const platformDb = {
     const amount = roundCurrency(input.amount);
     if (amount <= 0) throw new Error("Deposit must be greater than zero.");
 
-    const previousDeposit = current.totalDeposit;
-    const next = applyBook({
-      ...current,
-      totalDeposit: roundCurrency(current.totalDeposit + amount),
-    });
+    // A deposit buys units at the current price; it does not earn past performance.
+    const unitPrice = state.book.unitPrice;
     const deposit: Deposit = {
       id: createUuidV4(),
       userId,
-      portfolioId: next.id,
+      portfolioId: current.id,
       amount,
-      date: today(),
+      units: unitsForAmount(amount, unitPrice),
+      unitPrice,
+      date: nowIso(),
       note: input.note?.trim() || "Additional deposit",
     };
-
-    state.portfolios = state.portfolios.map((item) => (item.id === next.id ? next : item));
     state.deposits = [deposit, ...state.deposits];
-    rebuildPerformance(next, owner.memberSince);
+    const next = revalue(current);
+    state.portfolios = state.portfolios.map((item) => (item.id === next.id ? next : item));
     appendTransaction({
       userId,
       action: "deposit_recorded",
-      previousValue: previousDeposit,
+      previousValue: current.totalDeposit,
       newValue: next.totalDeposit,
-      note: deposit.note,
+      note: `${deposit.note} · ${deposit.units.toFixed(4)} units at ${unitPrice.toFixed(2)}`,
     });
     emit();
     return next;
@@ -432,52 +427,61 @@ export const platformDb = {
     emit();
     return next;
   },
+  listBookValuations(): BookValuation[] {
+    return [...snapshot().valuations].reverse();
+  },
   updateBook(input: UpdateBookInput): CollectiveBook {
-    const profitDelta = input.incrementalProfitPercent / 100;
-    const lossDelta = input.incrementalLossPercent / 100;
-    if (!Number.isFinite(profitDelta) || !Number.isFinite(lossDelta)) {
+    const { profitPercent, lossPercent } = input;
+    if (!Number.isFinite(profitPercent) || !Number.isFinite(lossPercent)) {
       throw new Error("Enter valid book percentages.");
     }
-    if (profitDelta === 0 && lossDelta === 0) {
+    if (profitPercent < 0 || lossPercent < 0) {
+      throw new Error("Profit and loss percentages cannot be negative.");
+    }
+    if (profitPercent === 0 && lossPercent === 0) {
       throw new Error("Enter a profit or loss percentage for the book.");
     }
+    if (lossPercent - profitPercent >= 100) {
+      throw new Error("A period loss of 100% or more would wipe out the book.");
+    }
 
-    const previousNet = (state.book.profitRate - state.book.lossRate) * 100;
-    const profitRate = state.book.profitRate + profitDelta;
-    const lossRate = state.book.lossRate + lossDelta;
-    // Both rates are cumulative totals; a correction may lower them but never below zero.
-    if (profitRate < -1e-9) {
-      throw new Error("That profit adjustment would take the book profit rate below zero.");
-    }
-    if (lossRate < -1e-9) {
-      throw new Error("That loss adjustment would take the book loss rate below zero.");
-    }
-    const book: CollectiveBook = {
-      profitRate: Math.max(0, profitRate),
-      lossRate: Math.max(0, lossRate),
-      updatedAt: nowIso(),
+    // Performance moves the unit price only; every investor's units stay the same.
+    const previousUnitPrice = snapshot().book.unitPrice;
+    const unitPrice = applyPeriodReturn(previousUnitPrice, profitPercent, lossPercent);
+    const date = nowIso();
+    const valuation: BookValuation = {
+      id: createUuidV4(),
+      date,
+      unitPrice,
+      previousUnitPrice,
+      changePercent: percentChange(previousUnitPrice, unitPrice),
+      profitPercent,
+      lossPercent,
     };
-    const nextNet = (book.profitRate - book.lossRate) * 100;
-    state.book = book;
-    state.portfolios = state.portfolios.map((portfolio) => {
+    state.valuations = [...state.valuations, valuation];
+    state.book = {
+      ...state.book,
+      unitPrice,
+      updatedAt: date,
+      lastChangePercent: valuation.changePercent,
+    };
+
+    const previousById = new Map(state.portfolios.map((item) => [item.id, item]));
+    state.portfolios = state.portfolios.map((portfolio) => revalue(portfolio));
+    const priceNote = `Unit price ${previousUnitPrice.toFixed(2)} → ${unitPrice.toFixed(2)}`;
+    state.portfolios.forEach((portfolio) => {
       const owner = this.getUser(portfolio.userId);
-      if (owner?.role !== "user") return portfolio;
-      return applyBook(portfolio, book);
-    });
-    rebuildAllPerformances();
-    snapshot()
-      .users.filter((user) => user.role === "user")
-      .forEach((user) => {
-        appendTransaction({
-          userId: user.id,
-          action: "book_updated",
-          previousValue: null,
-          newValue: null,
-          note: `Collective book updated from ${previousNet.toFixed(2)}% to ${nextNet.toFixed(2)}%`,
-        });
+      if (owner?.role !== "user" || portfolio.units <= 0) return;
+      appendTransaction({
+        userId: portfolio.userId,
+        action: "book_updated",
+        previousValue: previousById.get(portfolio.id)?.currentBalance ?? null,
+        newValue: portfolio.currentBalance,
+        note: priceNote,
       });
+    });
     emit();
-    return book;
+    return state.book;
   },
   createSession(userId: string) {
     snapshot();
@@ -519,8 +523,9 @@ export const platformDb = {
     return userId ? items.filter((item) => item.userId === userId) : items;
   },
   getPerformance(userId: string, range: TimeRange = "ALL") {
-    const series = snapshot().performances.find((item) => item.userId === userId);
-    if (!series) return [];
+    const portfolio = this.getPortfolioByUser(userId);
+    if (!portfolio) return [];
+    const series = replayPortfolio(depositsFor(portfolio.id), snapshot().valuations);
     if (range === "ALL") return series.points;
     const days = range === "1M" ? 30 : range === "3M" ? 90 : range === "6M" ? 180 : 365;
     // Measure the window back from the latest recorded point, not the wall clock,
@@ -565,13 +570,15 @@ export const platformDb = {
       month,
       users: investors.filter((item) => item.memberSince.slice(0, 7) <= month).length,
     }));
+    const seriesByPortfolio = activePortfolios.map(
+      (item) => replayPortfolio(depositsFor(item.id), snapshot().valuations).points,
+    );
+    // Total book value at each month end: the last point on or before that day per portfolio.
     const investmentGrowth = months.map((month) => {
-      const date = `${month}-28`;
-      const value = activePortfolios.reduce((sum, item) => {
-        const series = snapshot().performances.find((entry) => entry.portfolioId === item.id);
-        const point = series?.points.find((entry) => entry.date.slice(0, 7) === month) ?? series?.points.at(-1);
-        if (item.updatedAt.slice(0, 10) > date && !point) return sum;
-        return sum + (point?.value ?? item.currentBalance);
+      const end = monthEnd(month);
+      const value = seriesByPortfolio.reduce((sum, points) => {
+        const point = points.filter((entry) => entry.date <= end).at(-1);
+        return sum + (point?.value ?? 0);
       }, 0);
       return { month, value: Math.round(value) };
     });
