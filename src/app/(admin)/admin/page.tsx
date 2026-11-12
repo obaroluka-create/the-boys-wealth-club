@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useMounted } from "@/hooks/use-mounted";
 import { Landmark, TrendingUp, Users, Wallet, PiggyBank } from "lucide-react";
 import {
   Area,
@@ -25,8 +25,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 
 export default function AdminDashboardPage() {
   const query = useQuery(() => getAnalytics(), []);
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
+  const mounted = useMounted();
 
   if (query.status === "loading") return <PageSkeleton />;
   if (query.status === "error") {

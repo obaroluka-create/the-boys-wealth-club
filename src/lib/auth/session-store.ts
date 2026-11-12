@@ -36,3 +36,16 @@ export function clearAccessToken() {
   window.localStorage.removeItem(SESSION_STORAGE_KEY);
   window.sessionStorage.removeItem(SESSION_STORAGE_KEY);
 }
+
+const UNAUTHORIZED_EVENT = "auth:unauthorized";
+
+/** Tell the app the stored session was rejected so it can return to sign-in. */
+export function notifySessionExpired() {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+}
+
+export function onSessionExpired(listener: () => void) {
+  window.addEventListener(UNAUTHORIZED_EVENT, listener);
+  return () => window.removeEventListener(UNAUTHORIZED_EVENT, listener);
+}

@@ -15,6 +15,7 @@ import {
   loginAsDemo,
   logout as logoutRequest,
 } from "@/services/auth.service";
+import { onSessionExpired } from "@/lib/auth/session-store";
 import type { LoginInput, Session, UserRole } from "@/types";
 
 type AuthStatus = "loading" | "authenticated" | "unauthenticated";
@@ -51,6 +52,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       active = false;
     };
   }, []);
+
+  useEffect(
+    () =>
+      onSessionExpired(() => {
+        setSession(null);
+        setStatus("unauthenticated");
+      }),
+    [],
+  );
 
   const login = useCallback(async (input: LoginInput) => {
     const next = await loginRequest(input);

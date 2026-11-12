@@ -22,7 +22,7 @@ export function BookPerformanceCard() {
     const profitDelta = Number(profit) || 0;
     const lossDelta = Number(loss) || 0;
     const nextProfitRate = query.data.profitRate + profitDelta / 100;
-    const nextLossRate = Math.max(0, query.data.lossRate + lossDelta / 100);
+    const nextLossRate = query.data.lossRate + lossDelta / 100;
     return (nextProfitRate - nextLossRate) * 100;
   }, [loss, profit, query]);
 

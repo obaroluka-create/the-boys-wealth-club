@@ -1,4 +1,4 @@
-import { PLATFORM_STORAGE_KEY } from "@/lib/constants";
+import { DEMO_PASSWORD, PLATFORM_STORAGE_KEY } from "@/lib/constants";
 import { createUuidV4 } from "@/lib/uuid";
 import { createSeedState, type PlatformState } from "@/data/mock/seed";
 import { buildPerformanceSeries } from "@/data/mock/seed";
@@ -9,7 +9,6 @@ import type {
   Deposit,
   Dividend,
   InvestmentPortfolio,
-  InvestmentUpdateInput,
   LeaderboardEntry,
   Paginated,
   PlatformAnalytics,
@@ -24,7 +23,6 @@ import type {
 } from "@/types";
 import {
   applyBookToDeposit,
-  derivedBalance,
   netProfitLoss,
   portfolioPerformancePercentage,
   roundCurrency,
@@ -88,6 +86,32 @@ function nextReference() {
   });
   const next = Math.max(1400, ...numbers) + 1;
   return `MER-${next}`;
+}
+
+function assertEmailAvailable(email: string, exceptUserId?: string) {
+  const taken = snapshot().users.some(
+    (item) => item.id !== exceptUserId && item.email.toLowerCase() === email,
+  );
+  if (taken) throw new Error("Another account already uses this email.");
+}
+
+function uniqueUsername(email: string) {
+  const base = email.split("@")[0]?.toLowerCase().replace(/[^a-z0-9]/g, "") || "investor";
+  const taken = new Set(snapshot().users.map((item) => item.username.toLowerCase()));
+  let candidate = base;
+  for (let suffix = 2; taken.has(candidate); suffix += 1) candidate = `${base}${suffix}`;
+  return candidate;
+}
+
+/** Month keys (YYYY-MM) every `step` months, ending with the current month. */
+function recentMonths(count: number, step: number) {
+  const now = new Date();
+  return Array.from({ length: count }, (_, index) => {
+    const date = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - (count - 1 - index) * step, 1),
+    );
+    return date.toISOString().slice(0, 7);
+  });
 }
 
 function appendTransaction(entry: Omit<Transaction, "id" | "status" | "date"> & { date?: string }) {
@@ -223,11 +247,13 @@ export const platformDb = {
   },
   createUser(input: CreateUserInput): User {
     const id = input.id ?? createUuidV4();
-    const username = input.email.split("@")[0]?.toLowerCase().replace(/[^a-z0-9]/g, "") || "investor";
+    const email = input.email.trim().toLowerCase();
+    assertEmailAvailable(email);
+    const username = uniqueUsername(email);
     const created: User = {
       id,
       fullName: input.fullName.trim(),
-      email: input.email.trim().toLowerCase(),
+      email,
       username,
       role: "user",
       status: input.status,
@@ -259,8 +285,8 @@ export const platformDb = {
     state.users = [created, ...state.users];
     state.portfolios = [createdPortfolio, ...state.portfolios];
     state.deposits = [openingDeposit, ...state.deposits];
-    state.credentials[created.email] = "Meridian2026!";
-    state.credentials[created.username] = "Meridian2026!";
+    state.credentials[created.email] = DEMO_PASSWORD;
+    state.credentials[created.username] = DEMO_PASSWORD;
     rebuildPerformance(createdPortfolio, created.memberSince);
     appendTransaction({
       userId: id,
@@ -281,10 +307,22 @@ export const platformDb = {
   updateUser(id: string, input: UpdateUserInput): User {
     const current = this.getUser(id);
     if (!current) throw new Error("User not found.");
+    const fullName = input.fullName?.trim() ?? current.fullName;
+    const email = input.email?.trim().toLowerCase() ?? current.email;
+    if (!fullName) throw new Error("Full name is required.");
+    if (!email) throw new Error("Email is required.");
+    if (email !== current.email) {
+      assertEmailAvailable(email, id);
+      // Credentials are keyed by email, so carry the password over to the new address.
+      const previousEmail = current.email.toLowerCase();
+      const password = state.credentials[previousEmail];
+      delete state.credentials[previousEmail];
+      if (password !== undefined) state.credentials[email] = password;
+    }
     const next: User = {
       ...current,
-      fullName: input.fullName?.trim() ?? current.fullName,
-      email: input.email?.trim().toLowerCase() ?? current.email,
+      fullName,
+      email,
       status: input.status ?? current.status,
       imageUrl: input.imageUrl ?? current.imageUrl,
     };
@@ -361,7 +399,38 @@ export const platformDb = {
     return next;
   },
   recordDividend(userId: string, input: RecordDividendInput): InvestmentPortfolio {
-    return this.updateInvestment(userId, { dividendAmount: input.amount });
+    const current = this.getPortfolioByUser(userId);
+    const owner = this.getUser(userId);
+    if (!current || !owner) throw new Error("Portfolio not found.");
+    const amount = roundCurrency(input.amount);
+    if (!(amount > 0)) throw new Error("Dividend must be greater than zero.");
+
+    // Dividends are tracked separately and never change the current balance.
+    const next: InvestmentPortfolio = {
+      ...current,
+      totalDividends: roundCurrency(current.totalDividends + amount),
+      updatedAt: nowIso(),
+    };
+    const dividend: Dividend = {
+      id: createUuidV4(),
+      userId,
+      portfolioId: next.id,
+      portfolioReference: next.reference,
+      date: today(),
+      type: input.type ?? "special",
+      amount,
+      status: "paid",
+    };
+    state.dividends = [dividend, ...state.dividends];
+    state.portfolios = state.portfolios.map((item) => (item.id === next.id ? next : item));
+    appendTransaction({
+      userId,
+      action: "dividend_added",
+      previousValue: current.totalDividends,
+      newValue: next.totalDividends,
+    });
+    emit();
+    return next;
   },
   updateBook(input: UpdateBookInput): CollectiveBook {
     const profitDelta = input.incrementalProfitPercent / 100;
@@ -374,9 +443,18 @@ export const platformDb = {
     }
 
     const previousNet = (state.book.profitRate - state.book.lossRate) * 100;
+    const profitRate = state.book.profitRate + profitDelta;
+    const lossRate = state.book.lossRate + lossDelta;
+    // Both rates are cumulative totals; a correction may lower them but never below zero.
+    if (profitRate < -1e-9) {
+      throw new Error("That profit adjustment would take the book profit rate below zero.");
+    }
+    if (lossRate < -1e-9) {
+      throw new Error("That loss adjustment would take the book loss rate below zero.");
+    }
     const book: CollectiveBook = {
-      profitRate: state.book.profitRate + profitDelta,
-      lossRate: Math.max(0, state.book.lossRate + lossDelta),
+      profitRate: Math.max(0, profitRate),
+      lossRate: Math.max(0, lossRate),
       updatedAt: nowIso(),
     };
     const nextNet = (book.profitRate - book.lossRate) * 100;
@@ -400,54 +478,6 @@ export const platformDb = {
       });
     emit();
     return book;
-  },
-  updateInvestment(userId: string, input: InvestmentUpdateInput): InvestmentPortfolio {
-    const current = this.getPortfolioByUser(userId);
-    const owner = this.getUser(userId);
-    if (!current || !owner) throw new Error("Portfolio not found.");
-
-    let next: InvestmentPortfolio = { ...current, updatedAt: nowIso() };
-
-    if (input.dividendAmount && input.dividendAmount > 0) {
-      const previous = next.totalDividends;
-      next.totalDividends = roundCurrency(next.totalDividends + input.dividendAmount);
-      const dividend: Dividend = {
-        id: createUuidV4(),
-        userId,
-        portfolioId: next.id,
-        portfolioReference: next.reference,
-        date: today(),
-        type: "special",
-        amount: roundCurrency(input.dividendAmount),
-        status: "paid",
-      };
-      state.dividends = [dividend, ...state.dividends];
-      appendTransaction({
-        userId,
-        action: "dividend_added",
-        previousValue: previous,
-        newValue: next.totalDividends,
-      });
-    }
-
-    if (typeof input.currentBalance === "number") {
-      const previous = next.currentBalance;
-      next.currentBalance = roundCurrency(input.currentBalance);
-      appendTransaction({
-        userId,
-        action: "balance_updated",
-        previousValue: previous,
-        newValue: next.currentBalance,
-      });
-    }
-
-    state.portfolios = state.portfolios.map((item) => (item.id === next.id ? next : item));
-    rebuildPerformance(next, owner.memberSince);
-    emit();
-    return next;
-  },
-  updateBalance(userId: string, nextBalance: number) {
-    return this.updateInvestment(userId, { currentBalance: nextBalance });
   },
   createSession(userId: string) {
     snapshot();
@@ -493,7 +523,10 @@ export const platformDb = {
     if (!series) return [];
     if (range === "ALL") return series.points;
     const days = range === "1M" ? 30 : range === "3M" ? 90 : range === "6M" ? 180 : 365;
-    const cutoff = new Date();
+    // Measure the window back from the latest recorded point, not the wall clock,
+    // so short ranges still show data when the history was last updated a while ago.
+    const latest = series.points.at(-1)?.date ?? today();
+    const cutoff = new Date(`${latest}T00:00:00.000Z`);
     cutoff.setUTCDate(cutoff.getUTCDate() - days);
     const cutoffIso = cutoff.toISOString().slice(0, 10);
     const filtered = series.points.filter((point) => point.date >= cutoffIso);
@@ -527,7 +560,7 @@ export const platformDb = {
       value: portfolioPerformancePercentage(item),
     }));
     const ranked = [...performances].sort((a, b) => b.value - a.value);
-    const months = ["2025-04", "2025-07", "2025-10", "2026-01", "2026-04", "2026-07", "2026-09"];
+    const months = recentMonths(7, 3);
     const userGrowth = months.map((month) => ({
       month,
       users: investors.filter((item) => item.memberSince.slice(0, 7) <= month).length,
@@ -558,10 +591,5 @@ export const platformDb = {
       userGrowth,
       investmentGrowth,
     };
-  },
-  suggestedBalance(userId: string) {
-    const portfolio = this.getPortfolioByUser(userId);
-    if (!portfolio) return 0;
-    return derivedBalance(portfolio.totalDeposit, portfolio.totalProfit, portfolio.totalLoss);
   },
 };

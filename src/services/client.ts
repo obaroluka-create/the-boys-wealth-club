@@ -6,7 +6,11 @@
  * UI components should keep importing from services, never from `/src/data/mock`.
  */
 
-import { clearAccessToken, readAccessToken } from "@/lib/auth/session-store";
+import {
+  clearAccessToken,
+  notifySessionExpired,
+  readAccessToken,
+} from "@/lib/auth/session-store";
 
 export class ApiError extends Error {
   status: number;
@@ -45,9 +49,8 @@ export async function apiRequest<T>(
 
   if (response.status === 401) {
     clearAccessToken();
-    if (!options.skipAuthRedirect && typeof window !== "undefined") {
-      window.location.assign("/login");
-    }
+    // AuthProvider drops the session and the route guards send the user to /login.
+    if (!options.skipAuthRedirect) notifySessionExpired();
     throw new ApiError("Your session has expired. Sign in again.", 401);
   }
 
