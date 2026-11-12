@@ -35,7 +35,7 @@ export default function InvestmentsIndexPage() {
     <div>
       <PageHeading
         title="Investments"
-        description="Update the shared book, then manage each investor’s deposits and dividends."
+        description="Record the book’s performance to move the unit price, then manage each investor’s deposits and dividends."
       />
       <div className="mb-6">
         <BookPerformanceCard />

@@ -1,5 +1,5 @@
 import { EmptyState } from "@/components/states/empty-state";
-import { formatCurrency, formatDate } from "@/lib/format";
+import { formatCurrency, formatDate, formatUnits } from "@/lib/format";
 import type { Deposit } from "@/types";
 
 export function DepositsTable({ items }: { items: Deposit[] }) {
@@ -22,6 +22,8 @@ export function DepositsTable({ items }: { items: Deposit[] }) {
             <tr>
               <th className="px-4 py-3 font-medium">Date</th>
               <th className="px-4 py-3 font-medium">Type</th>
+              <th className="px-4 py-3 text-right font-medium">Unit price</th>
+              <th className="px-4 py-3 text-right font-medium">Units bought</th>
               <th className="px-4 py-3 text-right font-medium">Amount</th>
             </tr>
           </thead>
@@ -30,6 +32,12 @@ export function DepositsTable({ items }: { items: Deposit[] }) {
               <tr key={item.id} className="border-b last:border-0">
                 <td className="px-4 py-3">{formatDate(item.date)}</td>
                 <td className="px-4 py-3">{item.note ?? "Deposit"}</td>
+                <td className="financial px-4 py-3 text-right text-muted-foreground">
+                  {formatCurrency(item.unitPrice, true)}
+                </td>
+                <td className="financial px-4 py-3 text-right text-muted-foreground">
+                  {formatUnits(item.units)}
+                </td>
                 <td className="financial px-4 py-3 text-right">{formatCurrency(item.amount, true)}</td>
               </tr>
             ))}
@@ -42,6 +50,9 @@ export function DepositsTable({ items }: { items: Deposit[] }) {
             <p className="text-sm font-medium">{item.note ?? "Deposit"}</p>
             <p className="mt-1 text-xs text-muted-foreground">{formatDate(item.date)}</p>
             <p className="mt-2 financial text-lg">{formatCurrency(item.amount, true)}</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {formatUnits(item.units)} units at {formatCurrency(item.unitPrice, true)}
+            </p>
           </article>
         ))}
       </div>

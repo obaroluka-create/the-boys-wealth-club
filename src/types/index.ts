@@ -36,6 +36,8 @@ export interface InvestmentPortfolio {
   id: string;
   userId: string;
   reference: string;
+  /** Book units held. Balance = units × current unit price. */
+  units: number;
   /** Sum of all deposits into the portfolio, including later additions. */
   totalDeposit: number;
   currentBalance: number;
@@ -50,27 +52,42 @@ export interface Deposit {
   userId: string;
   portfolioId: string;
   amount: number;
+  /** Units bought by this deposit, fixed when it is recorded. */
+  units: number;
+  /** Unit price the deposit bought in at. */
+  unitPrice: number;
   date: string;
   note?: string;
 }
 
-/** Shared stock book applied to every investor at the same time. */
+/**
+ * Shared stock book every investor holds units in.
+ * Recording performance moves the unit price; it never changes anyone's units.
+ */
 export interface CollectiveBook {
-  profitRate: number;
-  lossRate: number;
+  unitPrice: number;
+  launchUnitPrice: number;
+  launchedAt: string;
   updatedAt: string;
+  /** Change applied by the most recent valuation, in percent. */
+  lastChangePercent: number;
+}
+
+/** One recorded book valuation (price history entry). */
+export interface BookValuation {
+  id: string;
+  date: string;
+  unitPrice: number;
+  previousUnitPrice: number;
+  changePercent: number;
+  profitPercent: number;
+  lossPercent: number;
 }
 
 export interface PortfolioPerformancePoint {
   date: string;
   value: number;
   percentageChange: number;
-}
-
-export interface PortfolioPerformance {
-  userId: string;
-  portfolioId: string;
-  points: PortfolioPerformancePoint[];
 }
 
 export interface Dividend {
@@ -171,9 +188,10 @@ export interface RecordDividendInput {
   type?: DividendType;
 }
 
+/** Performance for one period; the unit price moves by profit − loss percent. */
 export interface UpdateBookInput {
-  incrementalProfitPercent: number;
-  incrementalLossPercent: number;
+  profitPercent: number;
+  lossPercent: number;
 }
 
 export interface LoginInput {

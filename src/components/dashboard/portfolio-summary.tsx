@@ -1,11 +1,13 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { formatCurrency, formatPercent } from "@/lib/format";
+import { formatCurrency, formatPercent, formatUnits } from "@/lib/format";
 import { getPortfolioMetrics } from "@/lib/portfolio-metrics";
 import { cn } from "@/lib/utils";
 import type { InvestmentPortfolio } from "@/types";
 
 const rows = [
   { key: "totalDeposit", label: "Total deposit" },
+  { key: "units", label: "Units held" },
+  { key: "unitPrice", label: "Current unit price" },
   { key: "currentBalance", label: "Current portfolio balance" },
   { key: "totalProfit", label: "Total profit" },
   { key: "totalLoss", label: "Total loss" },
@@ -18,6 +20,8 @@ export function PortfolioSummary({ portfolio }: { portfolio: InvestmentPortfolio
   const metrics = getPortfolioMetrics(portfolio);
   const values: Record<(typeof rows)[number]["key"], number> = {
     totalDeposit: portfolio.totalDeposit,
+    units: portfolio.units,
+    unitPrice: portfolio.units > 0 ? portfolio.currentBalance / portfolio.units : 0,
     currentBalance: portfolio.currentBalance,
     totalProfit: portfolio.totalProfit,
     totalLoss: portfolio.totalLoss,
@@ -51,7 +55,11 @@ export function PortfolioSummary({ portfolio }: { portfolio: InvestmentPortfolio
                     tone === "loss" && "text-loss",
                   )}
                 >
-                  {row.key === "netPct" ? formatPercent(value) : formatCurrency(value, true)}
+                  {row.key === "netPct"
+                    ? formatPercent(value)
+                    : row.key === "units"
+                      ? formatUnits(value)
+                      : formatCurrency(value, true)}
                 </dd>
               </div>
             );

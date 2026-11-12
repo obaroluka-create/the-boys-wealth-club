@@ -42,6 +42,16 @@ export function formatPercent(value: number, signed = true): string {
   return body;
 }
 
+const unitsFmt = new Intl.NumberFormat("en-NG", {
+  minimumFractionDigits: 4,
+  maximumFractionDigits: 4,
+});
+
+/** Book units, shown to 4 decimal places. */
+export function formatUnits(value: number): string {
+  return unitsFmt.format(value);
+}
+
 export function formatDate(iso: string): string {
   return dateFmt.format(new Date(iso));
 }

@@ -3,6 +3,7 @@
  *
  * Performance percentages are measured against total deposits
  * (all capital contributed over time), not a single opening amount.
+ * Balances themselves come from unit accounting (see unitAccounting.ts).
  *
  * The backend remains the source of truth and may later re-implement
  * or validate the same formulas.
@@ -25,28 +26,6 @@ export function netProfitLoss(totalProfit: number, totalLoss: number): number {
 export function netPerformancePercentage(net: number, totalDeposit: number): number {
   if (totalDeposit === 0) return 0;
   return (net / totalDeposit) * 100;
-}
-
-export function derivedBalance(
-  totalDeposit: number,
-  totalProfit: number,
-  totalLoss: number,
-): number {
-  return totalDeposit + netProfitLoss(totalProfit, totalLoss);
-}
-
-export function applyBookToDeposit(
-  totalDeposit: number,
-  profitRate: number,
-  lossRate: number,
-): { totalProfit: number; totalLoss: number; currentBalance: number } {
-  const totalProfit = roundCurrency(totalDeposit * profitRate);
-  const totalLoss = roundCurrency(totalDeposit * lossRate);
-  return {
-    totalProfit,
-    totalLoss,
-    currentBalance: roundCurrency(derivedBalance(totalDeposit, totalProfit, totalLoss)),
-  };
 }
 
 export function portfolioPerformancePercentage(portfolio: {

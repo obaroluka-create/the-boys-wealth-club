@@ -6,7 +6,7 @@ export const PLATFORM = {
 } as const;
 
 export const SESSION_STORAGE_KEY = "meridian.session";
-export const PLATFORM_STORAGE_KEY = "meridian.platform.v9";
+export const PLATFORM_STORAGE_KEY = "meridian.platform.v10";
 export const SIDEBAR_STORAGE_KEY = "meridian.sidebar.collapsed";
 
 export const DEMO_PASSWORD = "Meridian2026!";

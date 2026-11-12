@@ -14,7 +14,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { formatCurrency, formatPercent } from "@/lib/format";
+import { formatCurrency, formatPercent, formatUnits } from "@/lib/format";
 import { getPortfolioMetrics } from "@/lib/portfolio-metrics";
 import { listDeposits, recordDeposit, recordDividend } from "@/services/investments.service";
 import { useQuery } from "@/hooks/use-query";
@@ -45,7 +45,7 @@ export function InvestmentEditor({
         amount: Number(depositAmount),
         note: depositNote.trim() || undefined,
       });
-      toast.success("Deposit recorded. Book performance still applies to the new total.");
+      toast.success("Deposit recorded. Units were bought at the current unit price.");
       setDepositAmount("");
       setDepositNote("");
     } catch (error) {
@@ -79,6 +79,15 @@ export function InvestmentEditor({
           <Row label="Full name" value={user.fullName} />
           <Row label="UUIDv4" value={user.id} mono />
           <Row label="Total deposit" value={formatCurrency(portfolio.totalDeposit, true)} />
+          <Row label="Units held" value={formatUnits(portfolio.units)} />
+          <Row
+            label="Average unit cost"
+            value={
+              portfolio.units > 0
+                ? formatCurrency(portfolio.totalDeposit / portfolio.units, true)
+                : "—"
+            }
+          />
           <Row label="Current balance" value={formatCurrency(portfolio.currentBalance, true)} />
           <Row label="Total profit" value={formatCurrency(portfolio.totalProfit, true)} tone="gain" />
           <Row label="Total loss" value={formatCurrency(portfolio.totalLoss, true)} tone="loss" />
@@ -88,14 +97,14 @@ export function InvestmentEditor({
             tone={current.net >= 0 ? "gain" : "loss"}
           />
           <Row
-            label="Book performance"
+            label="Return on deposits"
             value={formatPercent(current.netPct)}
             tone={current.netPct >= 0 ? "gain" : "loss"}
           />
           <Row label="Dividends" value={formatCurrency(portfolio.totalDividends, true)} />
           <p className="pt-2 text-xs text-muted-foreground">
-            Profit and loss come from the collective book. Record book performance on the
-            Investments page so every investor stays on the same percentage.
+            Profit and loss come from unit price movements while these units were held. Record
+            book performance on the Investments page; it moves the unit price for every investor.
           </p>
         </CardContent>
       </Card>
@@ -112,7 +121,7 @@ export function InvestmentEditor({
                 label="Amount"
                 value={depositAmount}
                 onChange={setDepositAmount}
-                hint="Adds to total deposit. Book rates are reapplied so performance stays shared."
+                hint="Buys units at today's unit price, so it only shares in performance recorded from now on."
               />
               <div className="space-y-2">
                 <Label htmlFor="deposit-note">Note (optional)</Label>
