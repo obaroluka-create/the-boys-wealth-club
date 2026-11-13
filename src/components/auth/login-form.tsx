@@ -11,7 +11,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAuth } from "@/lib/auth/auth-context";
 import { homeForRole } from "@/services/auth.service";
-import { DEMO_PASSWORD } from "@/lib/constants";
+import { hasRemoteApi } from "@/services/client";
+import { CHANGE_PASSWORD_PATH, DEMO_PASSWORD } from "@/lib/constants";
+import type { Session } from "@/types";
+
+function destination(session: Session) {
+  return session.mustChangePassword ? CHANGE_PASSWORD_PATH : homeForRole(session.role);
+}
 
 export function LoginForm() {
   const { login, demoLogin } = useAuth();
@@ -40,7 +46,7 @@ export function LoginForm() {
     setPending("form");
     try {
       const session = await login({ identifier, password, rememberMe });
-      router.replace(homeForRole(session.role));
+      router.replace(destination(session));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to sign in.");
     } finally {
@@ -53,7 +59,7 @@ export function LoginForm() {
     setPending(role);
     try {
       const session = await demoLogin(role);
-      router.replace(homeForRole(session.role));
+      router.replace(destination(session));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Demo sign-in failed.");
     } finally {
@@ -134,36 +140,38 @@ export function LoginForm() {
         </Button>
       </form>
 
-      <div className="rounded-lg border border-dashed border-neutral-300 bg-neutral-50 p-4 font-mono text-[11px] text-neutral-600">
-        <p className="font-sans text-[10px] font-semibold tracking-[0.16em] text-neutral-500 uppercase">
-          Development preview — not production UI
-        </p>
-        <p className="mt-2 font-sans text-xs leading-relaxed text-neutral-500">
-          Use these shortcuts to inspect role experiences. Demo password: {DEMO_PASSWORD}
-        </p>
-        <div className="mt-3 grid gap-2 sm:grid-cols-2">
-          <Button
-            type="button"
-            variant="outline"
-            className="h-9 font-sans"
-            disabled={pending !== null}
-            onClick={() => onDemo("user")}
-          >
-            {pending === "user" ? <Loader2 className="animate-spin" /> : null}
-            Continue as investor
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            className="h-9 font-sans"
-            disabled={pending !== null}
-            onClick={() => onDemo("admin")}
-          >
-            {pending === "admin" ? <Loader2 className="animate-spin" /> : null}
-            Continue as administrator
-          </Button>
+      {hasRemoteApi() ? null : (
+        <div className="rounded-lg border border-dashed border-neutral-300 bg-neutral-50 p-4 font-mono text-[11px] text-neutral-600">
+          <p className="font-sans text-[10px] font-semibold tracking-[0.16em] text-neutral-500 uppercase">
+            Development preview — not production UI
+          </p>
+          <p className="mt-2 font-sans text-xs leading-relaxed text-neutral-500">
+            Use these shortcuts to inspect role experiences. Demo password: {DEMO_PASSWORD}
+          </p>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            <Button
+              type="button"
+              variant="outline"
+              className="h-9 font-sans"
+              disabled={pending !== null}
+              onClick={() => onDemo("user")}
+            >
+              {pending === "user" ? <Loader2 className="animate-spin" /> : null}
+              Continue as investor
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="h-9 font-sans"
+              disabled={pending !== null}
+              onClick={() => onDemo("admin")}
+            >
+              {pending === "admin" ? <Loader2 className="animate-spin" /> : null}
+              Continue as administrator
+            </Button>
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

@@ -4,6 +4,7 @@
  * GET/POST /users
  * GET/PATCH /users/:id
  * PATCH /users/:id/status
+ * POST /users/:id/password
  */
 
 import { platformDb } from "@/data/mock/db";
@@ -12,6 +13,7 @@ import { ApiError, callService } from "@/services/client";
 import { portfolioPerformancePercentage } from "@/utils/investmentCalculations";
 import type {
   AccountStatus,
+  CreatedUser,
   CreateUserInput,
   Paginated,
   UpdateUserInput,
@@ -58,18 +60,21 @@ export async function getUser(id: string): Promise<User> {
   });
 }
 
-export async function createUser(input: CreateUserInput): Promise<User> {
+/** Issue an investor account; returns the one-time password to hand to its owner. */
+export async function createUser(input: CreateUserInput): Promise<CreatedUser> {
   if (!input.fullName.trim() || !input.email.trim()) {
     throw new ApiError("Full name and email are required.");
   }
   if (input.totalDeposit <= 0) {
     throw new ApiError("Total deposit must be greater than zero.");
   }
-  const user = await callService("/users", { method: "POST", body: JSON.stringify(input) }, () =>
-    platformDb.createUser(input),
+  const created = await callService<CreatedUser>(
+    "/users",
+    { method: "POST", body: JSON.stringify(input) },
+    () => platformDb.createUser(input),
   );
   invalidateQueries();
-  return user;
+  return created;
 }
 
 export async function updateUser(id: string, input: UpdateUserInput): Promise<User> {
@@ -90,8 +95,13 @@ export async function setUserStatus(id: string, status: AccountStatus): Promise<
   return user;
 }
 
-export async function listAdministrators(): Promise<User[]> {
-  return callService("/users?role=admin", { method: "GET" }, () =>
-    platformDb.listUsers().filter((user) => user.role === "admin"),
+/** Replace a user's password with a one-time password they must change at next sign-in. */
+export async function issueTemporaryPassword(id: string): Promise<{ temporaryPassword: string }> {
+  const result = await callService<{ temporaryPassword: string }>(
+    `/users/${id}/password`,
+    { method: "POST" },
+    () => platformDb.issueTemporaryPassword(id),
   );
+  invalidateQueries();
+  return result;
 }

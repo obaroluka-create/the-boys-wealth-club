@@ -23,7 +23,8 @@ import {
 } from "@/components/ui/select";
 import { createUuidV4 } from "@/lib/uuid";
 import { createUser } from "@/services/users.service";
-import type { AccountStatus } from "@/types";
+import { TemporaryPasswordNotice } from "@/components/admin/temporary-password-notice";
+import type { AccountStatus, CreatedUser } from "@/types";
 
 export function AddUserDialog({
   open,
@@ -50,6 +51,7 @@ function AddUserForm({ onDone }: { onDone: () => void }) {
   const [uuid] = useState(createUuidV4);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [created, setCreated] = useState<CreatedUser | null>(null);
 
   async function onSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -65,7 +67,7 @@ function AddUserForm({ onDone }: { onDone: () => void }) {
     }
     setPending(true);
     try {
-      await createUser({
+      const result = await createUser({
         id: uuid,
         fullName,
         email,
@@ -73,12 +75,33 @@ function AddUserForm({ onDone }: { onDone: () => void }) {
         status,
       });
       toast.success("User created.");
-      onDone();
+      setCreated(result);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to create user.");
     } finally {
       setPending(false);
     }
+  }
+
+  if (created) {
+    return (
+      <div>
+        <DialogHeader>
+          <DialogTitle>Investor account created</DialogTitle>
+          <DialogDescription>
+            {created.user.fullName} · {created.user.email}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="py-4">
+          <TemporaryPasswordNotice name={created.user.fullName} password={created.temporaryPassword} />
+        </div>
+        <DialogFooter>
+          <Button type="button" onClick={onDone}>
+            Done
+          </Button>
+        </DialogFooter>
+      </div>
+    );
   }
 
   return (

@@ -13,7 +13,9 @@ export type TransactionAction =
   | "account_activated"
   | "account_disabled"
   | "profile_updated"
-  | "password_reset_requested";
+  | "password_reset_requested"
+  | "password_reset_issued"
+  | "password_changed";
 export type TransactionStatus = "completed" | "pending" | "failed";
 export type TimeRange = "1M" | "3M" | "6M" | "1Y" | "ALL";
 
@@ -126,6 +128,8 @@ export interface Session {
   username: string;
   fullName: string;
   status: AccountStatus;
+  /** Set after an administrator issues a temporary password; the user must choose a new one. */
+  mustChangePassword?: boolean;
 }
 
 export interface PlatformAnalytics {
@@ -202,5 +206,17 @@ export interface LoginInput {
 
 export interface LoginResult {
   session: Session;
-  token: string;
+  /** Only the mock platform returns a token; the real API uses an httpOnly cookie. */
+  token?: string;
+}
+
+export interface ChangePasswordInput {
+  currentPassword: string;
+  newPassword: string;
+}
+
+/** A new account and the one-time password to hand to its owner. */
+export interface CreatedUser {
+  user: User;
+  temporaryPassword: string;
 }

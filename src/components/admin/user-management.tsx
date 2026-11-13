@@ -41,7 +41,8 @@ import { EmptyState } from "@/components/states/empty-state";
 import { StatusBadge } from "@/components/ui-blocks/status-badge";
 import { ChangeIndicator } from "@/components/dashboard/change-indicator";
 import { formatCurrency, shortUuid } from "@/lib/format";
-import { setUserStatus } from "@/services/users.service";
+import { issueTemporaryPassword, setUserStatus } from "@/services/users.service";
+import { TemporaryPasswordNotice } from "@/components/admin/temporary-password-notice";
 import type { AccountStatus, User, UserAccountRow, UserQuery } from "@/types";
 import { UserDetailSheet } from "@/components/admin/user-detail-sheet";
 
@@ -59,6 +60,8 @@ export function UserManagement({
   const [selected, setSelected] = useState<UserAccountRow | null>(null);
   const [statusTarget, setStatusTarget] = useState<{ user: User; status: AccountStatus } | null>(null);
   const [pending, setPending] = useState(false);
+  const [resetTarget, setResetTarget] = useState<User | null>(null);
+  const [issued, setIssued] = useState<{ user: User; password: string } | null>(null);
   const pageCount = Math.max(1, Math.ceil(total / query.pageSize));
 
   async function applyStatus() {
@@ -70,6 +73,20 @@ export function UserManagement({
       setStatusTarget(null);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Unable to update status.");
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function applyReset() {
+    if (!resetTarget) return;
+    setPending(true);
+    try {
+      const result = await issueTemporaryPassword(resetTarget.id);
+      setIssued({ user: resetTarget, password: result.temporaryPassword });
+      setResetTarget(null);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to reset the password.");
     } finally {
       setPending(false);
     }
@@ -161,6 +178,7 @@ export function UserManagement({
                         user={row.user}
                         onView={() => setSelected(row)}
                         onStatus={(status) => setStatusTarget({ user: row.user, status })}
+                        onResetPassword={() => setResetTarget(row.user)}
                       />
                     </TableCell>
                   </TableRow>
@@ -241,7 +259,9 @@ export function UserManagement({
               {statusTarget?.status === "disabled" ? "Disable user" : "Activate user"}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              This updates mock account status only. The backend will later persist the change.
+              {statusTarget?.status === "disabled"
+                ? `${statusTarget.user.fullName} will be signed out and unable to sign in until reactivated.`
+                : `${statusTarget?.user.fullName ?? "This user"} will be able to sign in again.`}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -253,6 +273,39 @@ export function UserManagement({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <AlertDialog open={Boolean(resetTarget)} onOpenChange={(open) => !open && setResetTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Issue a temporary password</AlertDialogTitle>
+            <AlertDialogDescription>
+              {resetTarget?.fullName}&apos;s current password will stop working and they will be
+              signed out everywhere. They must choose a new password at next sign-in.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={applyReset} disabled={pending}>
+              {pending ? <Loader2 className="animate-spin" /> : null}
+              Issue password
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={Boolean(issued)} onOpenChange={(open) => !open && setIssued(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Temporary password issued</AlertDialogTitle>
+          </AlertDialogHeader>
+          {issued ? (
+            <TemporaryPasswordNotice name={issued.user.fullName} password={issued.password} />
+          ) : null}
+          <AlertDialogFooter>
+            <AlertDialogAction onClick={() => setIssued(null)}>Done</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
@@ -261,10 +314,12 @@ function RowActions({
   user,
   onView,
   onStatus,
+  onResetPassword,
 }: {
   user: User;
   onView: () => void;
   onStatus: (status: AccountStatus) => void;
+  onResetPassword: () => void;
 }) {
   return (
     <DropdownMenu>
@@ -281,6 +336,7 @@ function RowActions({
         <DropdownMenuItem asChild>
           <Link href={`/admin/investments/${user.id}`}>Manage investment</Link>
         </DropdownMenuItem>
+        <DropdownMenuItem onClick={onResetPassword}>Issue temporary password</DropdownMenuItem>
         {user.status === "disabled" ? (
           <DropdownMenuItem onClick={() => onStatus("active")}>Activate user</DropdownMenuItem>
         ) : (

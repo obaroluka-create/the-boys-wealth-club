@@ -13,3 +13,4 @@ export const DEMO_PASSWORD = "Meridian2026!";
 
 export const USER_HOME = "/dashboard";
 export const ADMIN_HOME = "/admin";
+export const CHANGE_PASSWORD_PATH = "/account/password";

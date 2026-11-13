@@ -656,6 +656,8 @@ export function createSeedState() {
     book: { ...collectiveBook },
     valuations: structuredClone(bookValuations),
     sessions: {} as Record<string, { userId: string; createdAt: string }>,
+    /** Users who must replace a temporary password before using the app. */
+    mustChangePassword: {} as Record<string, boolean>,
   };
 }
 
