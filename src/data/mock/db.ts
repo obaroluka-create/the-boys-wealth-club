@@ -1,8 +1,10 @@
-import { DEMO_PASSWORD, PLATFORM_STORAGE_KEY } from "@/lib/constants";
+import { PLATFORM_STORAGE_KEY } from "@/lib/constants";
 import { createUuidV4 } from "@/lib/uuid";
 import { createSeedState, type PlatformState } from "@/data/mock/seed";
+import { passwordPolicyError } from "@/lib/password-policy";
 import type {
   AccountStatus,
+  CreatedUser,
   BookValuation,
   CollectiveBook,
   CreateUserInput,
@@ -106,6 +108,23 @@ function uniqueUsername(email: string) {
   let candidate = base;
   for (let suffix = 2; taken.has(candidate); suffix += 1) candidate = `${base}${suffix}`;
   return candidate;
+}
+
+/** Readable one-time password, e.g. "Kp7m-Qx3r-Tz9w" (mock only; the server makes its own). */
+function temporaryPassword() {
+  const letters = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz";
+  const digits = "23456789";
+  const bytes = new Uint8Array(12);
+  globalThis.crypto.getRandomValues(bytes);
+  const pick = (set: string, index: number) => set[bytes[index] % set.length];
+  return [0, 4, 8]
+    .map((i) => pick(letters, i) + pick(letters, i + 1) + pick(digits, i + 2) + pick(letters, i + 3))
+    .join("-");
+}
+
+function setPassword(user: User, password: string) {
+  state.credentials[user.email.toLowerCase()] = password;
+  state.credentials[user.username.toLowerCase()] = password;
 }
 
 /** Month keys (YYYY-MM) every `step` months, ending with the current month. */
@@ -244,7 +263,39 @@ export const platformDb = {
       pageSize,
     };
   },
-  createUser(input: CreateUserInput): User {
+  mustChangePassword(userId: string) {
+    return Boolean(snapshot().mustChangePassword?.[userId]);
+  },
+  changePassword(userId: string, currentPassword: string, newPassword: string) {
+    const user = this.getUser(userId);
+    if (!user) throw new Error("User not found.");
+    if (snapshot().credentials[user.email.toLowerCase()] !== currentPassword) {
+      throw new Error("The current password is incorrect.");
+    }
+    const problem = passwordPolicyError(newPassword);
+    if (problem) throw new Error(problem);
+    if (newPassword === currentPassword) {
+      throw new Error("Choose a password different from the current one.");
+    }
+    setPassword(user, newPassword);
+    state.mustChangePassword = { ...state.mustChangePassword, [userId]: false };
+    appendTransaction({ userId, action: "password_changed", previousValue: null, newValue: null });
+    emit();
+  },
+  issueTemporaryPassword(userId: string) {
+    const user = this.getUser(userId);
+    if (!user) throw new Error("User not found.");
+    const password = temporaryPassword();
+    setPassword(user, password);
+    state.mustChangePassword = { ...state.mustChangePassword, [userId]: true };
+    state.sessions = Object.fromEntries(
+      Object.entries(state.sessions).filter(([, entry]) => entry.userId !== userId),
+    );
+    appendTransaction({ userId, action: "password_reset_issued", previousValue: null, newValue: null });
+    emit();
+    return { temporaryPassword: password };
+  },
+  createUser(input: CreateUserInput): CreatedUser {
     const id = input.id ?? createUuidV4();
     const email = input.email.trim().toLowerCase();
     assertEmailAvailable(email);
@@ -289,8 +340,9 @@ export const platformDb = {
 
     state.users = [created, ...state.users];
     state.portfolios = [createdPortfolio, ...state.portfolios];
-    state.credentials[created.email] = DEMO_PASSWORD;
-    state.credentials[created.username] = DEMO_PASSWORD;
+    const password = temporaryPassword();
+    setPassword(created, password);
+    state.mustChangePassword = { ...state.mustChangePassword, [id]: true };
     appendTransaction({
       userId: id,
       action: "account_created",
@@ -299,7 +351,7 @@ export const platformDb = {
       note: `Opening deposit · ${openingDeposit.units.toFixed(4)} units at ${unitPrice.toFixed(2)}`,
     });
     emit();
-    return created;
+    return { user: created, temporaryPassword: password };
   },
   updateUser(id: string, input: UpdateUserInput): User {
     const current = this.getUser(id);

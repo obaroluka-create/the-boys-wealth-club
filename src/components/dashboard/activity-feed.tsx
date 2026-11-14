@@ -15,6 +15,8 @@ const ACTION_LABEL: Record<TransactionAction, string> = {
   account_disabled: "Account disabled",
   profile_updated: "Profile updated",
   password_reset_requested: "Password reset requested",
+  password_reset_issued: "Temporary password issued",
+  password_changed: "Password changed",
 };
 
 export function ActivityFeed({

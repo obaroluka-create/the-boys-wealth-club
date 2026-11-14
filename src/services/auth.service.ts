@@ -13,8 +13,8 @@ import { DEMO_ADMIN_ID, DEMO_USER_ID } from "@/data/mock/seed";
 import { platformDb } from "@/data/mock/db";
 import { clearAccessToken, persistAccessToken, readAccessToken } from "@/lib/auth/session-store";
 import { invalidateQueries } from "@/lib/query";
-import type { LoginInput, LoginResult, Session, UserRole } from "@/types";
-import { ApiError, callService } from "@/services/client";
+import type { ChangePasswordInput, LoginInput, LoginResult, Session, UserRole } from "@/types";
+import { ApiError, callService, hasRemoteApi } from "@/services/client";
 
 function toSession(user: NonNullable<ReturnType<typeof platformDb.getUser>>): Session {
   return {
@@ -25,6 +25,7 @@ function toSession(user: NonNullable<ReturnType<typeof platformDb.getUser>>): Se
     username: user.username,
     fullName: user.fullName,
     status: user.status,
+    mustChangePassword: platformDb.mustChangePassword(user.id),
   };
 }
 
@@ -55,11 +56,14 @@ export async function login(input: LoginInput): Promise<Session> {
     },
     { skipAuthRedirect: true },
   );
-  persistAccessToken(result.token, Boolean(input.rememberMe));
+  // The real API keeps the session in an httpOnly cookie; only the mock returns a token.
+  if (result.token) persistAccessToken(result.token, Boolean(input.rememberMe));
   return result.session;
 }
 
+/** Demo shortcut for the mock platform only; the real API has no demo sign-in. */
 export async function loginAsDemo(role: UserRole): Promise<Session> {
+  if (hasRemoteApi()) throw new ApiError("Demo sign-in is not available.", 404);
   const result = await callService<LoginResult>(
     `/auth/demo?role=${role}`,
     { method: "POST" },
@@ -70,7 +74,7 @@ export async function loginAsDemo(role: UserRole): Promise<Session> {
     },
     { skipAuthRedirect: true },
   );
-  persistAccessToken(result.token, true);
+  if (result.token) persistAccessToken(result.token, true);
   return result.session;
 }
 
@@ -104,6 +108,23 @@ export async function getSession(): Promise<Session | null> {
     },
     { skipAuthRedirect: true },
   );
+}
+
+/** Change the signed-in user's password; returns the refreshed session. */
+export async function changePassword(input: ChangePasswordInput): Promise<Session> {
+  const session = await callService<Session>(
+    "/auth/password",
+    { method: "POST", body: JSON.stringify(input) },
+    () => {
+      const token = readAccessToken();
+      const user = token ? platformDb.resolveSession(token) : null;
+      if (!user) throw new ApiError("Your session has expired. Sign in again.", 401);
+      platformDb.changePassword(user.id, input.currentPassword, input.newPassword);
+      return toSession(user);
+    },
+  );
+  invalidateQueries();
+  return session;
 }
 
 export async function requestPasswordReset(identifier: string): Promise<{ received: true }> {

@@ -24,7 +24,9 @@ export function AppHeader() {
       <div className="flex items-center gap-3">
         <MobileNavigation />
         <div>
-          <h1 className="text-base font-medium md:text-lg">{current?.label}</h1>
+          <h1 className="text-base font-medium md:text-lg">
+            {pathname.startsWith("/account") ? "Account" : current?.label}
+          </h1>
           <p className="hidden text-xs text-muted-foreground sm:block">
             {session?.role === "admin" ? "Administrator workspace" : "Investor workspace"}
           </p>

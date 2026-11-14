@@ -16,6 +16,7 @@ import {
   logout as logoutRequest,
 } from "@/services/auth.service";
 import { onSessionExpired } from "@/lib/auth/session-store";
+import { CHANGE_PASSWORD_PATH } from "@/lib/constants";
 import type { LoginInput, Session, UserRole } from "@/types";
 
 type AuthStatus = "loading" | "authenticated" | "unauthenticated";
@@ -26,6 +27,9 @@ interface AuthContextValue {
   login: (input: LoginInput) => Promise<Session>;
   demoLogin: (role: UserRole) => Promise<Session>;
   logout: () => Promise<void>;
+  /** Replace the session after the server returns a fresh copy (e.g. after a password change). */
+  updateSession: (session: Session) => void;
+  /** Where the user belongs now: their home, or the password page if they must change it. */
   homePath: string;
 }
 
@@ -82,6 +86,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setStatus("unauthenticated");
   }, []);
 
+  const updateSession = useCallback((next: Session) => {
+    setSession(next);
+    setStatus("authenticated");
+  }, []);
+
   const value = useMemo<AuthContextValue>(
     () => ({
       session,
@@ -89,9 +98,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       login,
       demoLogin,
       logout,
-      homePath: session ? homeForRole(session.role) : "/login",
+      updateSession,
+      homePath: !session
+        ? "/login"
+        : session.mustChangePassword
+          ? CHANGE_PASSWORD_PATH
+          : homeForRole(session.role),
     }),
-    [demoLogin, login, logout, session, status],
+    [demoLogin, login, logout, session, status, updateSession],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import Image from "next/image";
+import Link from "next/link";
+import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { Card, CardContent } from "@/components/ui/card";
 import { StatusBadge } from "@/components/ui-blocks/status-badge";
@@ -91,10 +93,14 @@ export function ProfileCard({ user }: { user: User }) {
           </div>
         </div>
         <ProfileRow label="Member since" value={formatDate(user.memberSince)} />
+        <div>
+          <Button asChild variant="outline" size="sm">
+            <Link href="/account/password">Change password</Link>
+          </Button>
+        </div>
         <p className="text-sm text-muted-foreground">
-          Investment figures cannot be edited from this page. Administrators manage capital
-          through the investment workspace; the backend will later control which profile fields
-          may be updated.
+          Investment figures cannot be edited from this page. Administrators manage capital and
+          account details; you can update your photo and password.
         </p>
       </CardContent>
     </Card>

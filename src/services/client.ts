@@ -1,16 +1,13 @@
 /**
  * Network boundary.
  *
- * When `NEXT_PUBLIC_API_URL` is set, services call that host with the
- * stored access token. Until then they stay on the mock platform.
+ * When `NEXT_PUBLIC_API_URL` is set (normally "/api"), services call the real
+ * API, authenticated by the httpOnly session cookie the server sets at sign-in.
+ * Until then they stay on the mock platform in browser storage.
  * UI components should keep importing from services, never from `/src/data/mock`.
  */
 
-import {
-  clearAccessToken,
-  notifySessionExpired,
-  readAccessToken,
-} from "@/lib/auth/session-store";
+import { clearAccessToken, notifySessionExpired } from "@/lib/auth/session-store";
 
 export class ApiError extends Error {
   status: number;
@@ -39,13 +36,16 @@ export async function apiRequest<T>(
   init: RequestInit = {},
   options: { skipAuthRedirect?: boolean } = {},
 ): Promise<T> {
-  const token = readAccessToken();
   const headers = new Headers(init.headers);
   if (!headers.has("Accept")) headers.set("Accept", "application/json");
   if (init.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
-  if (token && !headers.has("Authorization")) headers.set("Authorization", `Bearer ${token}`);
 
-  const response = await fetch(`${getApiBaseUrl()}${path}`, { ...init, headers });
+  const response = await fetch(`${getApiBaseUrl()}${path}`, {
+    ...init,
+    headers,
+    credentials: "same-origin",
+    cache: "no-store",
+  });
 
   if (response.status === 401) {
     clearAccessToken();
